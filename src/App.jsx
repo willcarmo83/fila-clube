@@ -508,7 +508,7 @@ export default function FilaClube() {
       )}
 
       {showLoginModal && (
-        <div style={{ position: "static", minHeight: "420px", background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(340px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <p style={{ margin: 0, fontSize: "15px", fontWeight: "500" }}>Acesso da administração</p>
@@ -527,7 +527,7 @@ export default function FilaClube() {
       )}
 
       {pendingAction && (
-        <div style={{ position: "static", minHeight: "420px", background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
               {pendingAction.type === "up" && "Subir posição"}
@@ -554,7 +554,7 @@ export default function FilaClube() {
       )}
 
       {confirmRemove !== null && (
-        <div style={{ position: "static", minHeight: "420px", background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Remover da fila?</p>
             <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
