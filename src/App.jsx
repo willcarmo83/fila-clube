@@ -482,6 +482,7 @@ export default function FilaClube() {
             )}
             {visibleQueue.map((p) => {
               const i = queue.findIndex((x) => x.id === p.id);
+              const canCall = queue.slice(0, i).every((x) => x.status === "chamado");
               return (
                 <div
                   key={p.id}
@@ -509,6 +510,7 @@ export default function FilaClube() {
                     <p style={{ margin: 0, fontSize: "12px", color: "#8FA1B0" }}>
                       {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
                       {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
+                      {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
                     </p>
                   </div>
                   {isAdmin && (
@@ -524,7 +526,12 @@ export default function FilaClube() {
                           <UserCheck size={14} aria-hidden="true" /> Registrar resposta
                         </button>
                       ) : (
-                        <button className="fc-btn fc-hide-mobile" onClick={() => callMember(i)}>
+                        <button
+                          className="fc-btn fc-hide-mobile"
+                          onClick={() => callMember(i)}
+                          disabled={!canCall}
+                          title={canCall ? "" : "Chame primeiro os sócios à frente na fila"}
+                        >
                           <PhoneCall size={14} aria-hidden="true" /> Chamar
                         </button>
                       )}
