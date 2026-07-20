@@ -15,10 +15,9 @@ import {
   Search,
   ArrowLeft,
 } from "lucide-react";
-import { storage } from "./storage.js";
+import { storage, supabase } from "./storage.js";
 
 const STORAGE_KEY = "fila-clube-data";
-const ADMIN_PASSWORD = "secretaria123";
 const PAGE_SIZE = 30;
 const LOG_PAGE_SIZE = 30;
 
@@ -82,12 +81,13 @@ export default function FilaClube() {
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState(false);
   const [modality, setModality] = useState("tenis");
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminName, setAdminName] = useState("");
+  const [session, setSession] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
   const [pwInput, setPwInput] = useState("");
-  const [nameInput, setNameInput] = useState("");
   const [pwError, setPwError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "" });
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -120,6 +120,17 @@ export default function FilaClube() {
         setLoading(false);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthChecked(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -206,27 +217,35 @@ export default function FilaClube() {
     setShowAddForm(false);
   }
 
-  function tryLogin() {
-    if (pwInput === ADMIN_PASSWORD && nameInput.trim()) {
-      setIsAdmin(true);
-      setAdminName(nameInput.trim());
-      setShowLoginModal(false);
-      setPwInput("");
-      setPwError("");
-    } else if (!nameInput.trim()) {
-      setPwError("Informe seu nome para identificação no log.");
-    } else {
-      setPwError("Senha incorreta.");
+  async function tryLogin() {
+    setPwError("");
+    if (!emailInput.trim() || !pwInput) {
+      setPwError("Informe e-mail e senha.");
+      return;
     }
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: emailInput.trim(),
+      password: pwInput,
+    });
+    setAuthLoading(false);
+    if (error) {
+      setPwError("E-mail ou senha incorretos.");
+      return;
+    }
+    setShowLoginModal(false);
+    setEmailInput("");
+    setPwInput("");
   }
 
-  function logout() {
-    setIsAdmin(false);
-    setAdminName("");
+  async function logout() {
+    await supabase.auth.signOut();
   }
 
   const queue = data?.queues?.[modality] || [];
   const currentModLabel = MODALIDADES.find((m) => m.id === modality)?.label;
+  const isAdmin = !!session;
+  const adminName = session?.user?.email || "";
 
   const filteredQueue = useMemo(() => {
     const q = queueSearch.trim().toLowerCase();
@@ -516,12 +535,14 @@ export default function FilaClube() {
                 <X size={14} aria-hidden="true" />
               </button>
             </div>
-            <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>Seu nome (aparece no log)</label>
-            <input className="fc-input" style={{ marginBottom: "10px" }} value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="Nome da secretaria" />
+            <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>E-mail</label>
+            <input className="fc-input" style={{ marginBottom: "10px" }} type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="secretaria@countryclube.com.br" />
             <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>Senha</label>
-            <input className="fc-input" style={{ marginBottom: "6px" }} type="password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && tryLogin()} placeholder="Senha de administração" />
+            <input className="fc-input" style={{ marginBottom: "6px" }} type="password" value={pwInput} onChange={(e) => setPwInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && tryLogin()} placeholder="Sua senha" />
             {pwError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{pwError}</p>}
-            <button className="fc-btn fc-btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: "8px" }} onClick={tryLogin}>Entrar</button>
+            <button className="fc-btn fc-btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: "8px" }} onClick={tryLogin} disabled={authLoading}>
+              {authLoading ? "Entrando..." : "Entrar"}
+            </button>
           </div>
         </div>
       )}
