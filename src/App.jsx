@@ -14,6 +14,9 @@ import {
   Users,
   Search,
   ArrowLeft,
+  UserCheck,
+  UserX,
+  Clock,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
@@ -94,6 +97,10 @@ export default function FilaClube() {
   const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down'|'remove', index }
   const [reasonInput, setReasonInput] = useState("");
   const [reasonError, setReasonError] = useState("");
+  const [pendingResponse, setPendingResponse] = useState(null); // { index }
+  const [responseChoice, setResponseChoice] = useState(null); // 'aceitou' | 'recusou_fica' | 'recusou_sai'
+  const [responseReason, setResponseReason] = useState("");
+  const [responseError, setResponseError] = useState("");
   const [queueSearch, setQueueSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showLogsView, setShowLogsView] = useState(false);
@@ -199,9 +206,61 @@ export default function FilaClube() {
   }
 
   function callMember(index) {
-    const person = dataRef.current.queues[modality][index];
-    let next = pushLog(dataRef.current, `${person.full} foi chamado para vaga disponível`, "Chamada de vaga disponível");
+    const arr = [...dataRef.current.queues[modality]];
+    const person = arr[index];
+    arr[index] = { ...person, status: "chamado", calledAt: Date.now() };
+    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
+    next = pushLog(next, `${person.full} foi chamado para vaga disponível`, "Chamada de vaga disponível — aguardando resposta");
     persist(next);
+  }
+
+  function openResponseModal(index) {
+    setPendingResponse({ index });
+    setResponseChoice(null);
+    setResponseReason("");
+    setResponseError("");
+  }
+
+  function confirmResponse() {
+    if (!responseChoice) {
+      setResponseError("Selecione o que aconteceu.");
+      return;
+    }
+    if (!responseReason.trim()) {
+      setResponseError("Informe uma observação sobre a resposta.");
+      return;
+    }
+    const { index } = pendingResponse;
+    const arr = [...dataRef.current.queues[modality]];
+    const person = arr[index];
+
+    if (responseChoice === "aceitou") {
+      arr.splice(index, 1);
+      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
+      next = pushLog(next, `${person.full} aceitou a vaga e foi matriculado`, responseReason.trim());
+      persist(next);
+    } else if (responseChoice === "recusou_fica") {
+      const target = Math.min(index + 1, arr.length - 1);
+      const { status, calledAt, ...clean } = person;
+      arr.splice(index, 1);
+      arr.splice(target, 0, clean);
+      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
+      next = pushLog(
+        next,
+        `${person.full} recusou a vaga e permanece na fila (saiu da posição ${index + 1} para a posição ${target + 1})`,
+        responseReason.trim()
+      );
+      persist(next);
+    } else if (responseChoice === "recusou_sai") {
+      arr.splice(index, 1);
+      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
+      next = pushLog(next, `${person.full} recusou a vaga e foi removido da fila`, responseReason.trim());
+      persist(next);
+    }
+
+    setPendingResponse(null);
+    setResponseChoice(null);
+    setResponseReason("");
   }
 
   function addMember() {
@@ -439,11 +498,17 @@ export default function FilaClube() {
                     {i + 1}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F" }}>
+                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                       {isAdmin ? p.full : maskName(p.full)}
+                      {p.status === "chamado" && (
+                        <span style={{ fontSize: "11px", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                          <Clock size={11} aria-hidden="true" /> Aguardando resposta
+                        </span>
+                      )}
                     </p>
                     <p style={{ margin: 0, fontSize: "12px", color: "#8FA1B0" }}>
                       {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
+                      {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
                     </p>
                   </div>
                   {isAdmin && (
@@ -454,9 +519,15 @@ export default function FilaClube() {
                       <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("down", i)} disabled={i === queue.length - 1} aria-label="Descer posição">
                         <ChevronDown size={14} aria-hidden="true" />
                       </button>
-                      <button className="fc-btn fc-hide-mobile" onClick={() => callMember(i)}>
-                        <PhoneCall size={14} aria-hidden="true" /> Chamar
-                      </button>
+                      {p.status === "chamado" ? (
+                        <button className="fc-btn fc-btn-primary" onClick={() => openResponseModal(i)}>
+                          <UserCheck size={14} aria-hidden="true" /> Registrar resposta
+                        </button>
+                      ) : (
+                        <button className="fc-btn fc-hide-mobile" onClick={() => callMember(i)}>
+                          <PhoneCall size={14} aria-hidden="true" /> Chamar
+                        </button>
+                      )}
                       <button className="fc-btn fc-btn-danger" style={{ padding: "6px 8px" }} onClick={() => setConfirmRemove(i)} aria-label="Remover da fila">
                         <Trash2 size={14} aria-hidden="true" />
                       </button>
@@ -569,6 +640,72 @@ export default function FilaClube() {
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               <button className="fc-btn fc-btn-primary" onClick={confirmPendingAction}>Confirmar</button>
               <button className="fc-btn" onClick={() => setPendingAction(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingResponse && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(420px, 100%)", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ margin: "0 0 4px", fontSize: "15px", fontWeight: "500" }}>Registrar resposta</p>
+            <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#5B6B7A" }}>
+              {queue[pendingResponse.index]?.full} — o que aconteceu com essa chamada?
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+              <button
+                className="fc-btn"
+                style={{
+                  justifyContent: "flex-start",
+                  padding: "10px 12px",
+                  borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#C3D3E0",
+                  background: responseChoice === "aceitou" ? "#EAF1F8" : "#fff",
+                }}
+                onClick={() => { setResponseChoice("aceitou"); setResponseError(""); }}
+              >
+                <UserCheck size={16} aria-hidden="true" /> Aceitou a vaga — foi matriculado
+              </button>
+              <button
+                className="fc-btn"
+                style={{
+                  justifyContent: "flex-start",
+                  padding: "10px 12px",
+                  borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#C3D3E0",
+                  background: responseChoice === "recusou_fica" ? "#EAF1F8" : "#fff",
+                }}
+                onClick={() => { setResponseChoice("recusou_fica"); setResponseError(""); }}
+              >
+                <Clock size={16} aria-hidden="true" /> Recusou — continua na fila (desce 1 posição)
+              </button>
+              <button
+                className="fc-btn"
+                style={{
+                  justifyContent: "flex-start",
+                  padding: "10px 12px",
+                  borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#C3D3E0",
+                  background: responseChoice === "recusou_sai" ? "#EAF1F8" : "#fff",
+                }}
+                onClick={() => { setResponseChoice("recusou_sai"); setResponseError(""); }}
+              >
+                <UserX size={16} aria-hidden="true" /> Recusou — remover da fila
+              </button>
+            </div>
+
+            <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>Observação (obrigatório)</label>
+            <textarea
+              className="fc-input"
+              rows={3}
+              style={{ resize: "vertical", marginBottom: "6px" }}
+              placeholder="Ex: falamos por telefone dia 20/07, confirmou matrícula na secretaria"
+              value={responseReason}
+              onChange={(e) => { setResponseReason(e.target.value); setResponseError(""); }}
+            />
+            {responseError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{responseError}</p>}
+
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button className="fc-btn fc-btn-primary" onClick={confirmResponse}>Confirmar</button>
+              <button className="fc-btn" onClick={() => setPendingResponse(null)}>Cancelar</button>
             </div>
           </div>
         </div>
