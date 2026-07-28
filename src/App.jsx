@@ -17,6 +17,7 @@ import {
   UserCheck,
   UserX,
   Clock,
+  Settings,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
@@ -24,7 +25,7 @@ const STORAGE_KEY = "fila-clube-data";
 const PAGE_SIZE = 30;
 const LOG_PAGE_SIZE = 30;
 
-const MODALIDADES = [
+const DEFAULT_MODALIDADES = [
   { id: "tenis", label: "Tênis" },
   { id: "natacao", label: "Natação" },
   { id: "pilates", label: "Pilates" },
@@ -32,6 +33,7 @@ const MODALIDADES = [
 ];
 
 const SEED = {
+  modalidades: DEFAULT_MODALIDADES,
   queues: {
     tenis: [
       { id: "t1", full: "Marcelo Andrade", matricula: "4021", phone: "(19) 99101-2233", joinedAt: "2026-02-11" },
@@ -58,6 +60,16 @@ const SEED = {
     { id: "l3", ts: Date.now() - 86400000 * 5, modality: "ginastica_artistica", text: "André Castro entrou na fila na posição 4", reason: "Solicitação feita na secretaria", by: "Secretaria" },
   ],
 };
+
+function slugify(text) {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 
 function maskName(full) {
   const parts = full.trim().split(" ");
@@ -92,6 +104,14 @@ export default function FilaClube() {
   const [pwError, setPwError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showManageModalidades, setShowManageModalidades] = useState(false);
+  const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
+  const [manageError, setManageError] = useState("");
+  const [confirmRemoveModalidade, setConfirmRemoveModalidade] = useState(null);
+  const [confirmClearQueue, setConfirmClearQueue] = useState(false);
+  const [clearReason, setClearReason] = useState("");
+  const [clearError, setClearError] = useState("");
+  const [expandedLogDetails, setExpandedLogDetails] = useState({});
   const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "" });
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down'|'remove', index }
@@ -113,11 +133,24 @@ export default function FilaClube() {
     (async () => {
       try {
         const result = await storage.get(STORAGE_KEY);
-        const parsed = result ? JSON.parse(result.value) : SEED;
+        let parsed = result ? JSON.parse(result.value) : SEED;
+        let needsSave = !result;
+        if (!parsed.modalidades) {
+          // Dados salvos antes da modalidade ser configurável: migra usando
+          // a lista padrão, preservando também qualquer fila já existente
+          // que não esteja nessa lista (ex: modalidades antigas com gente
+          // cadastrada continuam acessíveis em vez de somem da tela).
+          const existingKeys = Object.keys(parsed.queues || {});
+          const extras = existingKeys
+            .filter((k) => !DEFAULT_MODALIDADES.some((m) => m.id === k))
+            .map((k) => ({ id: k, label: k }));
+          parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
+          needsSave = true;
+        }
         setData(parsed);
         dataRef.current = parsed;
-        if (!result) {
-          await storage.set(STORAGE_KEY, JSON.stringify(SEED));
+        if (needsSave) {
+          await storage.set(STORAGE_KEY, JSON.stringify(parsed));
         }
       } catch (e) {
         console.error("Erro ao carregar dados do Supabase:", e);
@@ -158,14 +191,93 @@ export default function FilaClube() {
     }
   }
 
-  function pushLog(next, text, reason) {
+  function pushLog(next, text, reason, modalityOverride) {
     return {
       ...next,
       logs: [
-        { id: "l" + Date.now() + Math.random().toString(16).slice(2), ts: Date.now(), modality, text, reason, by: adminName || "Secretaria" },
+        { id: "l" + Date.now() + Math.random().toString(16).slice(2), ts: Date.now(), modality: modalityOverride || modality, text, reason, by: adminName || "Secretaria" },
         ...next.logs,
       ],
     };
+  }
+
+  function addModalidade() {
+    const label = newModalidadeLabel.trim();
+    if (!label) {
+      setManageError("Informe o nome da modalidade.");
+      return;
+    }
+    const id = slugify(label);
+    if (!id) {
+      setManageError("Nome inválido, tente usar letras e números.");
+      return;
+    }
+    if (modalidades.some((m) => m.id === id)) {
+      setManageError("Já existe uma modalidade com esse nome.");
+      return;
+    }
+    const nextModalidades = [...modalidades, { id, label }];
+    let next = {
+      ...dataRef.current,
+      modalidades: nextModalidades,
+      queues: { ...dataRef.current.queues, [id]: [] },
+    };
+    next = pushLog(next, `Modalidade "${label}" foi criada`, "Nova modalidade adicionada pela administração", id);
+    persist(next);
+    setNewModalidadeLabel("");
+    setManageError("");
+    setModality(id);
+  }
+
+  function removeModalidade(id) {
+    const item = modalidades.find((m) => m.id === id);
+    const label = item?.label || id;
+    const count = (dataRef.current.queues[id] || []).length;
+    if (count > 0) {
+      setManageError(`Não é possível remover "${label}" com sócios na fila (${count}). Remova ou transfira todos primeiro.`);
+      return;
+    }
+    const nextModalidades = modalidades.filter((m) => m.id !== id);
+    let next = { ...dataRef.current, modalidades: nextModalidades };
+    next = pushLog(next, `Modalidade "${label}" foi removida`, "Modalidade removida pela administração", id);
+    persist(next);
+    if (modality === id) {
+      setModality(nextModalidades[0]?.id || "");
+    }
+    setConfirmRemoveModalidade(null);
+    setManageError("");
+  }
+
+  function clearQueue() {
+    if (!clearReason.trim()) {
+      setClearError("Informe o motivo do esvaziamento da fila.");
+      return;
+    }
+    const removed = dataRef.current.queues[modality] || [];
+    if (removed.length === 0) {
+      setConfirmClearQueue(false);
+      return;
+    }
+    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: [] } };
+    next = {
+      ...next,
+      logs: [
+        {
+          id: "l" + Date.now() + Math.random().toString(16).slice(2),
+          ts: Date.now(),
+          modality,
+          text: `${removed.length} ${removed.length === 1 ? "sócio foi removido" : "sócios foram removidos"} da fila em massa`,
+          reason: clearReason.trim(),
+          by: adminName || "Secretaria",
+          removedMembers: removed.map((p) => ({ full: p.full, matricula: p.matricula })),
+        },
+        ...next.logs,
+      ],
+    };
+    persist(next);
+    setConfirmClearQueue(false);
+    setClearReason("");
+    setClearError("");
   }
 
   function openReasonModal(type, index) {
@@ -301,8 +413,9 @@ export default function FilaClube() {
     await supabase.auth.signOut();
   }
 
+  const modalidades = data?.modalidades || DEFAULT_MODALIDADES;
   const queue = data?.queues?.[modality] || [];
-  const currentModLabel = MODALIDADES.find((m) => m.id === modality)?.label;
+  const currentModLabel = modalidades.find((m) => m.id === modality)?.label;
   const isAdmin = !!session;
   const adminName = session?.user?.email || "";
 
@@ -389,7 +502,7 @@ export default function FilaClube() {
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
             <select className="fc-select" value={logModalityFilter} onChange={(e) => { setLogModalityFilter(e.target.value); setLogVisibleCount(LOG_PAGE_SIZE); }}>
               <option value="todas">Todas as modalidades</option>
-              {MODALIDADES.map((m) => (
+              {modalidades.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
@@ -419,9 +532,27 @@ export default function FilaClube() {
               <div key={l.id} style={{ padding: "12px 0", borderBottom: i < visibleLogs.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
                   <span style={{ color: "#10314F", fontWeight: "500" }}>{l.text}</span>
-                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{MODALIDADES.find((m) => m.id === l.modality)?.label}</span>
+                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{modalidades.find((m) => m.id === l.modality)?.label}</span>
                 </div>
                 {l.reason && <p style={{ margin: "4px 0 0", color: "#5B6B7A" }}>Motivo: {l.reason}</p>}
+                {l.removedMembers && l.removedMembers.length > 0 && (
+                  <div style={{ margin: "4px 0 0" }}>
+                    <button
+                      className="fc-btn"
+                      style={{ padding: "2px 8px", fontSize: "11px" }}
+                      onClick={() => setExpandedLogDetails((s) => ({ ...s, [l.id]: !s[l.id] }))}
+                    >
+                      {expandedLogDetails[l.id] ? "Ocultar lista" : `Ver lista (${l.removedMembers.length})`}
+                    </button>
+                    {expandedLogDetails[l.id] && (
+                      <ul style={{ margin: "6px 0 0", paddingLeft: "18px", color: "#5B6B7A" }}>
+                        {l.removedMembers.map((m, idx) => (
+                          <li key={idx}>{m.full} — matrícula {m.matricula}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <p style={{ margin: "4px 0 0", color: "#8FA1B0", fontSize: "12px" }}>{formatLogTime(l.ts)} · {l.by}</p>
               </div>
             ))}
@@ -435,8 +566,8 @@ export default function FilaClube() {
         </div>
       ) : (
         <>
-          <div style={{ padding: "20px 24px 4px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {MODALIDADES.map((m) => (
+          <div style={{ padding: "20px 24px 4px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+            {modalidades.map((m) => (
               <button
                 key={m.id}
                 className={`fc-tab ${modality === m.id ? "fc-tab-active" : ""}`}
@@ -445,15 +576,78 @@ export default function FilaClube() {
                 {m.label}
               </button>
             ))}
+            {isAdmin && (
+              <button
+                className="fc-btn"
+                style={{ padding: "6px 10px", fontSize: "12px", marginLeft: "auto" }}
+                onClick={() => { setShowManageModalidades((v) => !v); setManageError(""); }}
+              >
+                <Settings size={13} aria-hidden="true" /> Gerenciar modalidades
+              </button>
+            )}
           </div>
+
+          {isAdmin && showManageModalidades && (
+            <div style={{ margin: "12px 24px 0", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades cadastradas</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "14px" }}>
+                {modalidades.map((m) => {
+                  const count = (data.queues[m.id] || []).length;
+                  return (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#F4F7FA", borderRadius: "6px" }}>
+                      <span style={{ fontSize: "13px", color: "#10314F" }}>
+                        {m.label} <span style={{ color: "#8FA1B0" }}>· {count} na fila</span>
+                      </span>
+                      <button
+                        className="fc-btn fc-btn-danger"
+                        style={{ padding: "4px 8px" }}
+                        onClick={() => { setConfirmRemoveModalidade(m.id); setManageError(""); }}
+                        disabled={count > 0}
+                        title={count > 0 ? "Só é possível remover modalidades com a fila vazia" : "Remover modalidade"}
+                        aria-label={`Remover ${m.label}`}
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Adicionar nova modalidade</p>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  className="fc-input"
+                  style={{ flex: 1, minWidth: "180px" }}
+                  placeholder="Ex: Squash, Beach tênis..."
+                  value={newModalidadeLabel}
+                  onChange={(e) => { setNewModalidadeLabel(e.target.value); setManageError(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && addModalidade()}
+                />
+                <button className="fc-btn fc-btn-primary" onClick={addModalidade}>
+                  <Plus size={14} aria-hidden="true" /> Adicionar
+                </button>
+              </div>
+              {manageError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "8px 0 0" }}>{manageError}</p>}
+            </div>
+          )}
 
           <div style={{ padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
             <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
               {isAdmin ? <Unlock size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
               {isAdmin ? "Modo administração — você pode reordenar, chamar e remover sócios" : "Modo consulta — visível a qualquer sócio"}
             </p>
-            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-              <Users size={14} aria-hidden="true" /> {queue.length} na fila de {currentModLabel}
+            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <Users size={14} aria-hidden="true" /> {queue.length} na fila de {currentModLabel}
+              </span>
+              {isAdmin && queue.length > 0 && (
+                <button
+                  className="fc-btn fc-btn-danger"
+                  style={{ padding: "4px 10px", fontSize: "12px" }}
+                  onClick={() => { setConfirmClearQueue(true); setClearReason(""); setClearError(""); }}
+                >
+                  <Trash2 size={12} aria-hidden="true" /> Esvaziar fila
+                </button>
+              )}
             </p>
           </div>
 
@@ -713,6 +907,45 @@ export default function FilaClube() {
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               <button className="fc-btn fc-btn-primary" onClick={confirmResponse}>Confirmar</button>
               <button className="fc-btn" onClick={() => setPendingResponse(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmClearQueue && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(400px, 100%)", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Esvaziar fila de {currentModLabel}?</p>
+            <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
+              Isso remove os {queue.length} sócios atualmente na fila de {currentModLabel}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
+            </p>
+            <textarea
+              className="fc-input"
+              rows={3}
+              style={{ resize: "vertical", marginBottom: "6px" }}
+              placeholder="Ex: reformulação da modalidade, todos foram contatados e reinscritos manualmente"
+              value={clearReason}
+              onChange={(e) => { setClearReason(e.target.value); setClearError(""); }}
+            />
+            {clearError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{clearError}</p>}
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button className="fc-btn fc-btn-danger" onClick={clearQueue}>Esvaziar fila</button>
+              <button className="fc-btn" onClick={() => { setConfirmClearQueue(false); setClearReason(""); setClearError(""); }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRemoveModalidade && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Remover modalidade?</p>
+            <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#5B6B7A" }}>
+              "{modalidades.find((m) => m.id === confirmRemoveModalidade)?.label}" deixará de aparecer nas abas. O histórico de alterações dela continua acessível pelo filtro do log.
+            </p>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button className="fc-btn fc-btn-danger" onClick={() => removeModalidade(confirmRemoveModalidade)}>Remover</button>
+              <button className="fc-btn" onClick={() => setConfirmRemoveModalidade(null)}>Cancelar</button>
             </div>
           </div>
         </div>
