@@ -18,6 +18,7 @@ import {
   UserX,
   Clock,
   Settings,
+  MessageCircle,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
@@ -60,6 +61,22 @@ const SEED = {
     { id: "l3", ts: Date.now() - 86400000 * 5, modality: "ginastica_artistica", text: "André Castro entrou na fila na posição 4", reason: "Solicitação feita na secretaria", by: "Secretaria" },
   ],
 };
+
+function formatPhone(value) {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length === 0) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+function whatsappLink(phone) {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (!digits) return null;
+  const withCountry = digits.startsWith("55") && digits.length >= 12 ? digits : `55${digits}`;
+  return `https://wa.me/${withCountry}`;
+}
 
 function slugify(text) {
   return text
@@ -104,6 +121,7 @@ export default function FilaClube() {
   const [pwError, setPwError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [addMemberError, setAddMemberError] = useState("");
   const [showManageModalidades, setShowManageModalidades] = useState(false);
   const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
   const [manageError, setManageError] = useState("");
@@ -376,7 +394,13 @@ export default function FilaClube() {
   }
 
   function addMember() {
-    if (!newMember.full.trim() || !newMember.matricula.trim()) return;
+    const missing = [];
+    if (!newMember.full.trim()) missing.push("nome completo");
+    if (!newMember.matricula.trim()) missing.push("matrícula");
+    if (missing.length > 0) {
+      setAddMemberError(`Preencha: ${missing.join(", ")}.`);
+      return;
+    }
     const arr = [
       ...dataRef.current.queues[modality],
       { id: "m" + Date.now(), full: newMember.full.trim(), matricula: newMember.matricula.trim(), phone: newMember.phone.trim(), joinedAt: new Date().toISOString().slice(0, 10) },
@@ -385,6 +409,7 @@ export default function FilaClube() {
     next = pushLog(next, `${newMember.full.trim()} entrou na fila na posição ${arr.length}`, "Nova inscrição na fila");
     persist(next);
     setNewMember({ full: "", matricula: "", phone: "" });
+    setAddMemberError("");
     setShowAddForm(false);
   }
 
@@ -701,10 +726,22 @@ export default function FilaClube() {
                         </span>
                       )}
                     </p>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#8FA1B0" }}>
-                      {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
-                      {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
-                      {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
+                    <p style={{ margin: 0, fontSize: "12px", color: "#8FA1B0", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                      <span>
+                        {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
+                        {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
+                        {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
+                      </span>
+                      {isAdmin && p.phone && (
+                        <a
+                          href={whatsappLink(p.phone)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: "#1F8A5C", textDecoration: "none", fontWeight: "500" }}
+                        >
+                          <MessageCircle size={12} aria-hidden="true" /> {p.phone}
+                        </a>
+                      )}
                     </p>
                   </div>
                   {isAdmin && (
@@ -756,13 +793,14 @@ export default function FilaClube() {
               ) : (
                 <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "8px", marginBottom: "10px" }}>
-                    <input className="fc-input" placeholder="Nome completo" value={newMember.full} onChange={(e) => setNewMember({ ...newMember, full: e.target.value })} />
-                    <input className="fc-input" placeholder="Matrícula" value={newMember.matricula} onChange={(e) => setNewMember({ ...newMember, matricula: e.target.value })} />
-                    <input className="fc-input" placeholder="Telefone" value={newMember.phone} onChange={(e) => setNewMember({ ...newMember, phone: e.target.value })} />
+                    <input className="fc-input" placeholder="Nome completo" value={newMember.full} onChange={(e) => { setNewMember({ ...newMember, full: e.target.value }); setAddMemberError(""); }} />
+                    <input className="fc-input" placeholder="Matrícula" value={newMember.matricula} onChange={(e) => { setNewMember({ ...newMember, matricula: e.target.value }); setAddMemberError(""); }} />
+                    <input className="fc-input" placeholder="Telefone (opcional)" maxLength={15} value={newMember.phone} onChange={(e) => { setNewMember({ ...newMember, phone: formatPhone(e.target.value) }); setAddMemberError(""); }} />
                   </div>
+                  {addMemberError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{addMemberError}</p>}
                   <div style={{ display: "flex", gap: "8px" }}>
                     <button className="fc-btn fc-btn-primary" onClick={addMember}>Adicionar ao fim da fila</button>
-                    <button className="fc-btn" onClick={() => setShowAddForm(false)}>Cancelar</button>
+                    <button className="fc-btn" onClick={() => { setShowAddForm(false); setAddMemberError(""); }}>Cancelar</button>
                   </div>
                 </div>
               )}
