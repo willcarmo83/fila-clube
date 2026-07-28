@@ -165,6 +165,19 @@ export default function FilaClube() {
           parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
           needsSave = true;
         }
+        // Garante que toda modalidade listada tenha, de fato, uma lista de
+        // fila criada nos dados salvos (mesmo que vazia) — evita que uma
+        // modalidade apareça na aba mas quebre silenciosamente ao tentar
+        // usá-la, caso ela nunca tenha sido persistida antes.
+        const missingQueues = (parsed.modalidades || []).filter((m) => !parsed.queues?.[m.id]);
+        if (missingQueues.length > 0) {
+          const filledQueues = { ...parsed.queues };
+          missingQueues.forEach((m) => {
+            filledQueues[m.id] = [];
+          });
+          parsed = { ...parsed, queues: filledQueues };
+          needsSave = true;
+        }
         setData(parsed);
         dataRef.current = parsed;
         if (needsSave) {
@@ -310,7 +323,7 @@ export default function FilaClube() {
       return;
     }
     const { type, index } = pendingAction;
-    const arr = [...dataRef.current.queues[modality]];
+    const arr = [...(dataRef.current.queues[modality] || [])];
     const person = arr[index];
 
     if (type === "up" || type === "down") {
@@ -336,7 +349,7 @@ export default function FilaClube() {
   }
 
   function callMember(index) {
-    const arr = [...dataRef.current.queues[modality]];
+    const arr = [...(dataRef.current.queues[modality] || [])];
     const person = arr[index];
     arr[index] = { ...person, status: "chamado", calledAt: Date.now() };
     let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
@@ -361,7 +374,7 @@ export default function FilaClube() {
       return;
     }
     const { index } = pendingResponse;
-    const arr = [...dataRef.current.queues[modality]];
+    const arr = [...(dataRef.current.queues[modality] || [])];
     const person = arr[index];
 
     if (responseChoice === "aceitou") {
@@ -402,7 +415,7 @@ export default function FilaClube() {
       return;
     }
     const arr = [
-      ...dataRef.current.queues[modality],
+      ...(dataRef.current.queues[modality] || []),
       { id: "m" + Date.now(), full: newMember.full.trim(), matricula: newMember.matricula.trim(), phone: newMember.phone.trim(), joinedAt: new Date().toISOString().slice(0, 10) },
     ];
     let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
@@ -1014,7 +1027,7 @@ export default function FilaClube() {
                     return;
                   }
                   const index = confirmRemove;
-                  const arr = [...dataRef.current.queues[modality]];
+                  const arr = [...(dataRef.current.queues[modality] || [])];
                   const person = arr[index];
                   arr.splice(index, 1);
                   let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
