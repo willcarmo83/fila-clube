@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import {
   ChevronUp,
   ChevronDown,
-  PhoneCall,
+  Megaphone,
   Trash2,
   Plus,
   Lock,
@@ -542,7 +542,12 @@ export default function FilaClube() {
         .fc-tab { font-family: system-ui, sans-serif; font-size: 13px; padding: 8px 16px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; color: #5B6B7A; background: transparent; }
         .fc-tab-active { background: #0F3D63; color: #fff; }
         .fc-select { font-family: system-ui, sans-serif; border: 1px solid #C3D3E0; border-radius: 6px; padding: 7px 10px; font-size: 13px; background: #fff; color: #10314F; }
-        @media (max-width: 480px) { .fc-hide-mobile { display: none; } }
+        .fc-queue-row { display: flex; align-items: flex-start; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EAF0F5; font-family: system-ui, sans-serif; flex-wrap: wrap; }
+        .fc-queue-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
+        @media (max-width: 560px) {
+          .fc-queue-row { align-items: center; }
+          .fc-queue-actions { width: 100%; margin-left: 0; margin-top: 8px; flex-wrap: wrap; }
+        }
       `}</style>
 
       <div style={{ background: "#0F3D63", color: "#fff", padding: "20px 24px" }}>
@@ -781,17 +786,7 @@ export default function FilaClube() {
               const i = queue.findIndex((x) => x.id === p.id);
               const canCall = queue.slice(0, i).every((x) => x.status === "chamado");
               return (
-                <div
-                  key={p.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "14px",
-                    padding: "12px 16px",
-                    borderBottom: "1px solid #EAF0F5",
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
+                <div key={p.id} className="fc-queue-row">
                   <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: "#E3EEF7", color: "#0F3D63", fontSize: "13px", fontWeight: "600", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     {i + 1}
                   </div>
@@ -804,13 +799,13 @@ export default function FilaClube() {
                         </span>
                       )}
                     </p>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#8FA1B0", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                      <span>
-                        {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
-                        {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
-                        {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
-                      </span>
-                      {isAdmin && p.phone && (
+                    <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
+                      {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
+                      {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
+                      {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
+                    </p>
+                    {isAdmin && p.phone && (
+                      <p style={{ margin: "2px 0 0", fontSize: "12px" }}>
                         <a
                           href={whatsappLink(p.phone)}
                           target="_blank"
@@ -819,11 +814,11 @@ export default function FilaClube() {
                         >
                           <MessageCircle size={12} aria-hidden="true" /> {p.phone}
                         </a>
-                      )}
-                    </p>
+                      </p>
+                    )}
                   </div>
                   {isAdmin && (
-                    <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
+                    <div className="fc-queue-actions">
                       <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("up", i)} disabled={i === 0} aria-label="Subir posição">
                         <ChevronUp size={14} aria-hidden="true" />
                       </button>
@@ -836,12 +831,12 @@ export default function FilaClube() {
                         </button>
                       ) : (
                         <button
-                          className="fc-btn fc-hide-mobile"
+                          className="fc-btn"
                           onClick={() => callMember(i)}
                           disabled={!canCall}
                           title={canCall ? "" : "Chame primeiro os sócios à frente na fila"}
                         >
-                          <PhoneCall size={14} aria-hidden="true" /> Chamar
+                          <Megaphone size={14} aria-hidden="true" /> Chamar
                         </button>
                       )}
                       <button className="fc-btn fc-btn-danger" style={{ padding: "6px 8px" }} onClick={() => setConfirmRemove(i)} aria-label="Remover da fila">
