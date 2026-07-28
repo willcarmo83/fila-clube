@@ -165,6 +165,30 @@ export default function FilaClube() {
           parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
           needsSave = true;
         }
+        // Recupera modalidades removidas antes dessa versão (quando remover
+        // apagava de vez, inclusive do filtro de histórico). Qualquer id
+        // referenciado em filas ou logs que não esteja mais na lista volta
+        // como "arquivada" — some das abas, mas fica filtrável no histórico.
+        const referencedIds = new Set([
+          ...Object.keys(parsed.queues || {}),
+          ...(parsed.logs || []).map((l) => l.modality).filter(Boolean),
+        ]);
+        const knownIds = new Set((parsed.modalidades || []).map((m) => m.id));
+        const toRecover = [...referencedIds].filter((id) => !knownIds.has(id));
+        if (toRecover.length > 0) {
+          parsed = {
+            ...parsed,
+            modalidades: [
+              ...(parsed.modalidades || []),
+              ...toRecover.map((id) => ({
+                id,
+                label: DEFAULT_MODALIDADES.find((m) => m.id === id)?.label || id,
+                archived: true,
+              })),
+            ],
+          };
+          needsSave = true;
+        }
         // Garante que toda modalidade listada tenha, de fato, uma lista de
         // fila criada nos dados salvos (mesmo que vazia) — evita que uma
         // modalidade apareça na aba mas quebre silenciosamente ao tentar
@@ -243,11 +267,11 @@ export default function FilaClube() {
       setManageError("Nome inválido, tente usar letras e números.");
       return;
     }
-    if (modalidades.some((m) => m.id === id)) {
-      setManageError("Já existe uma modalidade com esse nome.");
+    if (allModalidades.some((m) => m.id === id)) {
+      setManageError("Já existe uma modalidade com esse nome (ativa ou arquivada).");
       return;
     }
-    const nextModalidades = [...modalidades, { id, label }];
+    const nextModalidades = [...allModalidades, { id, label }];
     let next = {
       ...dataRef.current,
       modalidades: nextModalidades,
@@ -261,21 +285,36 @@ export default function FilaClube() {
   }
 
   function removeModalidade(id) {
-    const item = modalidades.find((m) => m.id === id);
+    const item = allModalidades.find((m) => m.id === id);
     const label = item?.label || id;
     const count = (dataRef.current.queues[id] || []).length;
     if (count > 0) {
-      setManageError(`Não é possível remover "${label}" com sócios na fila (${count}). Remova ou transfira todos primeiro.`);
+      setManageError(`Não é possível remover "${label}" com sócios na fila (${count}). Esvazie a fila primeiro.`);
       return;
     }
-    const nextModalidades = modalidades.filter((m) => m.id !== id);
+    const nextModalidades = allModalidades.map((m) => (m.id === id ? { ...m, archived: true } : m));
     let next = { ...dataRef.current, modalidades: nextModalidades };
-    next = pushLog(next, `Modalidade "${label}" foi removida`, "Modalidade removida pela administração", id);
+    next = pushLog(
+      next,
+      `Modalidade "${label}" foi arquivada (some das abas, mas continua filtrável no histórico)`,
+      "Modalidade arquivada pela administração",
+      id
+    );
     persist(next);
     if (modality === id) {
-      setModality(nextModalidades[0]?.id || "");
+      setModality(nextModalidades.find((m) => !m.archived)?.id || "");
     }
     setConfirmRemoveModalidade(null);
+    setManageError("");
+  }
+
+  function restoreModalidade(id) {
+    const item = allModalidades.find((m) => m.id === id);
+    const label = item?.label || id;
+    const nextModalidades = allModalidades.map((m) => (m.id === id ? { ...m, archived: false } : m));
+    let next = { ...dataRef.current, modalidades: nextModalidades };
+    next = pushLog(next, `Modalidade "${label}" foi restaurada`, "Modalidade restaurada pela administração", id);
+    persist(next);
     setManageError("");
   }
 
@@ -452,7 +491,8 @@ export default function FilaClube() {
     await supabase.auth.signOut();
   }
 
-  const modalidades = data?.modalidades || DEFAULT_MODALIDADES;
+  const allModalidades = data?.modalidades || DEFAULT_MODALIDADES;
+  const modalidades = allModalidades.filter((m) => !m.archived);
   const queue = data?.queues?.[modality] || [];
   const currentModLabel = modalidades.find((m) => m.id === modality)?.label;
   const isAdmin = !!session;
@@ -541,8 +581,8 @@ export default function FilaClube() {
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
             <select className="fc-select" value={logModalityFilter} onChange={(e) => { setLogModalityFilter(e.target.value); setLogVisibleCount(LOG_PAGE_SIZE); }}>
               <option value="todas">Todas as modalidades</option>
-              {modalidades.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
+              {allModalidades.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}{m.archived ? " (arquivada)" : ""}</option>
               ))}
             </select>
             <div style={{ position: "relative", flex: 1, minWidth: "200px" }}>
@@ -571,7 +611,7 @@ export default function FilaClube() {
               <div key={l.id} style={{ padding: "12px 0", borderBottom: i < visibleLogs.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
                   <span style={{ color: "#10314F", fontWeight: "500" }}>{l.text}</span>
-                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{modalidades.find((m) => m.id === l.modality)?.label}</span>
+                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{allModalidades.find((m) => m.id === l.modality)?.label}</span>
                 </div>
                 {l.reason && <p style={{ margin: "4px 0 0", color: "#5B6B7A" }}>Motivo: {l.reason}</p>}
                 {l.removedMembers && l.removedMembers.length > 0 && (
@@ -644,6 +684,26 @@ export default function FilaClube() {
                 );
               })}
             </div>
+
+            {allModalidades.some((m) => m.archived) && (
+              <>
+                <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades arquivadas</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
+                  {allModalidades.filter((m) => m.archived).map((m) => (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F4F7FA", borderRadius: "6px", opacity: 0.75 }}>
+                      <span style={{ fontSize: "13px", color: "#10314F" }}>{m.label}</span>
+                      <button className="fc-btn" style={{ padding: "4px 8px", fontSize: "12px" }} onClick={() => restoreModalidade(m.id)}>
+                        Restaurar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ fontSize: "12px", color: "#8FA1B0", margin: "0 0 18px" }}>
+                  Modalidades arquivadas não aparecem nas abas, mas seus registros continuam disponíveis no filtro do histórico.
+                </p>
+              </>
+            )}
+
             <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Adicionar nova modalidade</p>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <input
@@ -972,10 +1032,10 @@ export default function FilaClube() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(400px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
-              Esvaziar fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}?
+              Esvaziar fila de {allModalidades.find((m) => m.id === confirmClearQueue)?.label}?
             </p>
             <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
-              Isso remove os {(data.queues[confirmClearQueue] || []).length} sócios atualmente na fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
+              Isso remove os {(data.queues[confirmClearQueue] || []).length} sócios atualmente na fila de {allModalidades.find((m) => m.id === confirmClearQueue)?.label}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
             </p>
             <textarea
               className="fc-input"
@@ -997,12 +1057,12 @@ export default function FilaClube() {
       {confirmRemoveModalidade && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
-            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Remover modalidade?</p>
+            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Arquivar modalidade?</p>
             <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#5B6B7A" }}>
-              "{modalidades.find((m) => m.id === confirmRemoveModalidade)?.label}" deixará de aparecer nas abas. O histórico de alterações dela continua acessível pelo filtro do log.
+              "{allModalidades.find((m) => m.id === confirmRemoveModalidade)?.label}" deixará de aparecer nas abas. O histórico continua acessível pelo filtro, e você pode restaurar a modalidade a qualquer momento.
             </p>
             <div style={{ display: "flex", gap: "8px" }}>
-              <button className="fc-btn fc-btn-danger" onClick={() => removeModalidade(confirmRemoveModalidade)}>Remover</button>
+              <button className="fc-btn fc-btn-danger" onClick={() => removeModalidade(confirmRemoveModalidade)}>Arquivar</button>
               <button className="fc-btn" onClick={() => setConfirmRemoveModalidade(null)}>Cancelar</button>
             </div>
           </div>
