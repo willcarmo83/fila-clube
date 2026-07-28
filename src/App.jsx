@@ -511,7 +511,7 @@ export default function FilaClube() {
               Country Clube
             </p>
             <h1 style={{ fontSize: "24px", fontWeight: "500", margin: 0 }}>
-              {showLogsView ? "Histórico de alterações" : "Fila de espera — atividades esportivas"}
+              {showLogsView ? "Histórico de alterações" : showManageModalidades ? "Gerenciar modalidades" : "Fila de espera — atividades esportivas"}
             </h1>
           </div>
           <div style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -602,6 +602,53 @@ export default function FilaClube() {
             </button>
           )}
         </div>
+      ) : showManageModalidades ? (
+        <div style={{ padding: "20px 24px 24px" }}>
+          <button className="fc-btn" style={{ marginBottom: "16px" }} onClick={() => setShowManageModalidades(false)}>
+            <ArrowLeft size={14} aria-hidden="true" /> Voltar para a fila
+          </button>
+
+          <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades cadastradas</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
+              {modalidades.map((m) => {
+                const count = (data.queues[m.id] || []).length;
+                return (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F4F7FA", borderRadius: "6px" }}>
+                    <span style={{ fontSize: "13px", color: "#10314F" }}>
+                      {m.label} <span style={{ color: "#8FA1B0" }}>· {count} na fila</span>
+                    </span>
+                    <button
+                      className="fc-btn fc-btn-danger"
+                      style={{ padding: "4px 8px" }}
+                      onClick={() => { setConfirmRemoveModalidade(m.id); setManageError(""); }}
+                      disabled={count > 0}
+                      title={count > 0 ? "Só é possível remover modalidades com a fila vazia" : "Remover modalidade"}
+                      aria-label={`Remover ${m.label}`}
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Adicionar nova modalidade</p>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                className="fc-input"
+                style={{ flex: 1, minWidth: "180px" }}
+                placeholder="Ex: Squash, Beach tênis..."
+                value={newModalidadeLabel}
+                onChange={(e) => { setNewModalidadeLabel(e.target.value); setManageError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && addModalidade()}
+              />
+              <button className="fc-btn fc-btn-primary" onClick={addModalidade}>
+                <Plus size={14} aria-hidden="true" /> Adicionar
+              </button>
+            </div>
+            {manageError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "8px 0 0" }}>{manageError}</p>}
+          </div>
+        </div>
       ) : (
         <>
           <div style={{ padding: "20px 24px 4px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
@@ -618,55 +665,12 @@ export default function FilaClube() {
               <button
                 className="fc-btn"
                 style={{ padding: "6px 10px", fontSize: "12px", marginLeft: "auto" }}
-                onClick={() => { setShowManageModalidades((v) => !v); setManageError(""); }}
+                onClick={() => { setShowManageModalidades(true); setManageError(""); }}
               >
                 <Settings size={13} aria-hidden="true" /> Gerenciar modalidades
               </button>
             )}
           </div>
-
-          {isAdmin && showManageModalidades && (
-            <div style={{ margin: "12px 24px 0", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
-              <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades cadastradas</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "14px" }}>
-                {modalidades.map((m) => {
-                  const count = (data.queues[m.id] || []).length;
-                  return (
-                    <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: "#F4F7FA", borderRadius: "6px" }}>
-                      <span style={{ fontSize: "13px", color: "#10314F" }}>
-                        {m.label} <span style={{ color: "#8FA1B0" }}>· {count} na fila</span>
-                      </span>
-                      <button
-                        className="fc-btn fc-btn-danger"
-                        style={{ padding: "4px 8px" }}
-                        onClick={() => { setConfirmRemoveModalidade(m.id); setManageError(""); }}
-                        disabled={count > 0}
-                        title={count > 0 ? "Só é possível remover modalidades com a fila vazia" : "Remover modalidade"}
-                        aria-label={`Remover ${m.label}`}
-                      >
-                        <Trash2 size={13} aria-hidden="true" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Adicionar nova modalidade</p>
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <input
-                  className="fc-input"
-                  style={{ flex: 1, minWidth: "180px" }}
-                  placeholder="Ex: Squash, Beach tênis..."
-                  value={newModalidadeLabel}
-                  onChange={(e) => { setNewModalidadeLabel(e.target.value); setManageError(""); }}
-                  onKeyDown={(e) => e.key === "Enter" && addModalidade()}
-                />
-                <button className="fc-btn fc-btn-primary" onClick={addModalidade}>
-                  <Plus size={14} aria-hidden="true" /> Adicionar
-                </button>
-              </div>
-              {manageError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "8px 0 0" }}>{manageError}</p>}
-            </div>
-          )}
 
           <div style={{ padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
             <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
