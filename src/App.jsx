@@ -126,7 +126,7 @@ export default function FilaClube() {
   const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
   const [manageError, setManageError] = useState("");
   const [confirmRemoveModalidade, setConfirmRemoveModalidade] = useState(null);
-  const [confirmClearQueue, setConfirmClearQueue] = useState(false);
+  const [confirmClearQueue, setConfirmClearQueue] = useState(null); // id da modalidade, ou null
   const [clearReason, setClearReason] = useState("");
   const [clearError, setClearError] = useState("");
   const [expandedLogDetails, setExpandedLogDetails] = useState({});
@@ -284,19 +284,20 @@ export default function FilaClube() {
       setClearError("Informe o motivo do esvaziamento da fila.");
       return;
     }
-    const removed = dataRef.current.queues[modality] || [];
+    const targetId = confirmClearQueue;
+    const removed = dataRef.current.queues[targetId] || [];
     if (removed.length === 0) {
-      setConfirmClearQueue(false);
+      setConfirmClearQueue(null);
       return;
     }
-    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: [] } };
+    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [targetId]: [] } };
     next = {
       ...next,
       logs: [
         {
           id: "l" + Date.now() + Math.random().toString(16).slice(2),
           ts: Date.now(),
-          modality,
+          modality: targetId,
           text: `${removed.length} ${removed.length === 1 ? "sócio foi removido" : "sócios foram removidos"} da fila em massa`,
           reason: clearReason.trim(),
           by: adminName || "Secretaria",
@@ -306,7 +307,7 @@ export default function FilaClube() {
       ],
     };
     persist(next);
-    setConfirmClearQueue(false);
+    setConfirmClearQueue(null);
     setClearReason("");
     setClearError("");
   }
@@ -618,16 +619,27 @@ export default function FilaClube() {
                     <span style={{ fontSize: "13px", color: "#10314F" }}>
                       {m.label} <span style={{ color: "#8FA1B0" }}>· {count} na fila</span>
                     </span>
-                    <button
-                      className="fc-btn fc-btn-danger"
-                      style={{ padding: "4px 8px" }}
-                      onClick={() => { setConfirmRemoveModalidade(m.id); setManageError(""); }}
-                      disabled={count > 0}
-                      title={count > 0 ? "Só é possível remover modalidades com a fila vazia" : "Remover modalidade"}
-                      aria-label={`Remover ${m.label}`}
-                    >
-                      <Trash2 size={13} aria-hidden="true" />
-                    </button>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      {count > 0 && (
+                        <button
+                          className="fc-btn"
+                          style={{ padding: "4px 8px", fontSize: "12px" }}
+                          onClick={() => { setConfirmClearQueue(m.id); setClearReason(""); setClearError(""); }}
+                        >
+                          Esvaziar fila
+                        </button>
+                      )}
+                      <button
+                        className="fc-btn fc-btn-danger"
+                        style={{ padding: "4px 8px" }}
+                        onClick={() => { setConfirmRemoveModalidade(m.id); setManageError(""); }}
+                        disabled={count > 0}
+                        title={count > 0 ? "Esvazie a fila antes de remover" : "Remover modalidade"}
+                        aria-label={`Remover ${m.label}`}
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -677,19 +689,8 @@ export default function FilaClube() {
               {isAdmin ? <Unlock size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
               {isAdmin ? "Modo administração — você pode reordenar, chamar e remover sócios" : "Modo consulta — visível a qualquer sócio"}
             </p>
-            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "10px" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <Users size={14} aria-hidden="true" /> {queue.length} na fila de {currentModLabel}
-              </span>
-              {isAdmin && queue.length > 0 && (
-                <button
-                  className="fc-btn fc-btn-danger"
-                  style={{ padding: "4px 10px", fontSize: "12px" }}
-                  onClick={() => { setConfirmClearQueue(true); setClearReason(""); setClearError(""); }}
-                >
-                  <Trash2 size={12} aria-hidden="true" /> Esvaziar fila
-                </button>
-              )}
+            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Users size={14} aria-hidden="true" /> {queue.length} na fila de {currentModLabel}
             </p>
           </div>
 
@@ -970,9 +971,11 @@ export default function FilaClube() {
       {confirmClearQueue && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(400px, 100%)", fontFamily: "system-ui, sans-serif" }}>
-            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Esvaziar fila de {currentModLabel}?</p>
+            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
+              Esvaziar fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}?
+            </p>
             <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
-              Isso remove os {queue.length} sócios atualmente na fila de {currentModLabel}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
+              Isso remove os {(data.queues[confirmClearQueue] || []).length} sócios atualmente na fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
             </p>
             <textarea
               className="fc-input"
@@ -985,7 +988,7 @@ export default function FilaClube() {
             {clearError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{clearError}</p>}
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               <button className="fc-btn fc-btn-danger" onClick={clearQueue}>Esvaziar fila</button>
-              <button className="fc-btn" onClick={() => { setConfirmClearQueue(false); setClearReason(""); setClearError(""); }}>Cancelar</button>
+              <button className="fc-btn" onClick={() => { setConfirmClearQueue(null); setClearReason(""); setClearError(""); }}>Cancelar</button>
             </div>
           </div>
         </div>
