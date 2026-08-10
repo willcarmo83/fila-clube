@@ -19,12 +19,30 @@ import {
   Clock,
   Settings,
   MessageCircle,
+  Sunrise,
+  Sun,
+  Moon,
+  CalendarDays,
+  Filter,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
 const STORAGE_KEY = "fila-clube-data";
 const PAGE_SIZE = 30;
 const LOG_PAGE_SIZE = 30;
+
+const NIVEIS = [
+  { id: "iniciante", label: "Iniciante", bg: "#E3F3EA", fg: "#1F7A45" },
+  { id: "intermediario", label: "Intermediário", bg: "#E3EEF7", fg: "#0F3D63" },
+  { id: "avancado", label: "Avançado", bg: "#F1E9F7", fg: "#6B3FA0" },
+];
+
+const HORARIOS = [
+  { id: "manha", label: "Manhã", Icon: Sunrise },
+  { id: "tarde", label: "Tarde", Icon: Sun },
+  { id: "noite", label: "Noite", Icon: Moon },
+  { id: "fds", label: "Fim de semana", Icon: CalendarDays },
+];
 
 const DEFAULT_MODALIDADES = [
   { id: "tenis", label: "Tênis" },
@@ -130,7 +148,7 @@ export default function FilaClube() {
   const [clearReason, setClearReason] = useState("");
   const [clearError, setClearError] = useState("");
   const [expandedLogDetails, setExpandedLogDetails] = useState({});
-  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "" });
+  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "", level: "", availability: [] });
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down'|'remove', index }
   const [reasonInput, setReasonInput] = useState("");
@@ -140,6 +158,9 @@ export default function FilaClube() {
   const [responseReason, setResponseReason] = useState("");
   const [responseError, setResponseError] = useState("");
   const [queueSearch, setQueueSearch] = useState("");
+  const [filterLevel, setFilterLevel] = useState("");
+  const [showVagaFilters, setShowVagaFilters] = useState(false);
+  const [filterHorarios, setFilterHorarios] = useState([]);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showLogsView, setShowLogsView] = useState(false);
   const [logModalityFilter, setLogModalityFilter] = useState("todas");
@@ -231,6 +252,8 @@ export default function FilaClube() {
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
     setQueueSearch("");
+    setFilterLevel("");
+    setFilterHorarios([]);
   }, [modality]);
 
   async function persist(next) {
@@ -393,7 +416,11 @@ export default function FilaClube() {
     const person = arr[index];
     arr[index] = { ...person, status: "chamado", calledAt: Date.now() };
     let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-    next = pushLog(next, `${person.full} foi chamado para vaga disponível`, "Chamada de vaga disponível — aguardando resposta");
+    const filterParts = [];
+    if (filterLevel) filterParts.push(NIVEIS.find((n) => n.id === filterLevel)?.label);
+    if (filterHorarios.length > 0) filterParts.push(filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "));
+    const filterNote = filterParts.length > 0 ? ` (chamado dentro do filtro: ${filterParts.join(" · ")})` : "";
+    next = pushLog(next, `${person.full} foi chamado para vaga disponível${filterNote}`, "Chamada de vaga disponível — aguardando resposta");
     persist(next);
   }
 
@@ -456,12 +483,20 @@ export default function FilaClube() {
     }
     const arr = [
       ...(dataRef.current.queues[modality] || []),
-      { id: "m" + Date.now(), full: newMember.full.trim(), matricula: newMember.matricula.trim(), phone: newMember.phone.trim(), joinedAt: new Date().toISOString().slice(0, 10) },
+      {
+        id: "m" + Date.now(),
+        full: newMember.full.trim(),
+        matricula: newMember.matricula.trim(),
+        phone: newMember.phone.trim(),
+        level: newMember.level || "",
+        availability: newMember.availability || [],
+        joinedAt: new Date().toISOString().slice(0, 10),
+      },
     ];
     let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
     next = pushLog(next, `${newMember.full.trim()} entrou na fila na posição ${arr.length}`, "Nova inscrição na fila");
     persist(next);
-    setNewMember({ full: "", matricula: "", phone: "" });
+    setNewMember({ full: "", matricula: "", phone: "", level: "", availability: [] });
     setAddMemberError("");
     setShowAddForm(false);
   }
@@ -500,9 +535,27 @@ export default function FilaClube() {
 
   const filteredQueue = useMemo(() => {
     const q = queueSearch.trim().toLowerCase();
-    if (!q) return queue;
-    return queue.filter((p) => p.full.toLowerCase().includes(q) || p.matricula.includes(q));
-  }, [queue, queueSearch]);
+    return queue.filter((p) => {
+      const matchesSearch = !q || p.full.toLowerCase().includes(q) || p.matricula.includes(q);
+      const matchesLevel = !filterLevel || p.level === filterLevel;
+      const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
+      return matchesSearch && matchesLevel && matchesHorario;
+    });
+  }, [queue, queueSearch, filterLevel, filterHorarios]);
+
+  const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0;
+
+  // Lista usada para decidir a ordem de chamada — considera só o filtro de
+  // vaga (nível/horário), nunca a busca por texto (que é só pra achar
+  // alguém na tela, não deve interferir em quem pode ser chamado).
+  const vagaEligibleQueue = useMemo(() => {
+    if (!isFilteringForVaga) return queue;
+    return queue.filter((p) => {
+      const matchesLevel = !filterLevel || p.level === filterLevel;
+      const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
+      return matchesLevel && matchesHorario;
+    });
+  }, [queue, filterLevel, filterHorarios, isFilteringForVaga]);
 
   const visibleQueue = filteredQueue.slice(0, visibleCount);
 
@@ -544,9 +597,11 @@ export default function FilaClube() {
         .fc-select { font-family: system-ui, sans-serif; border: 1px solid #C3D3E0; border-radius: 6px; padding: 7px 10px; font-size: 13px; background: #fff; color: #10314F; }
         .fc-queue-row { display: flex; align-items: flex-start; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EAF0F5; font-family: system-ui, sans-serif; flex-wrap: wrap; }
         .fc-queue-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
+        .fc-form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
         @media (max-width: 560px) {
           .fc-queue-row { align-items: center; }
           .fc-queue-actions { width: 100%; margin-left: 0; margin-top: 8px; flex-wrap: wrap; }
+          .fc-form-grid { grid-template-columns: 1fr; }
         }
       `}</style>
 
@@ -776,6 +831,94 @@ export default function FilaClube() {
             />
           </div>
 
+          {isAdmin && (
+            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", overflow: "hidden" }}>
+              <button
+                onClick={() => setShowVagaFilters((v) => !v)}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  padding: "10px 14px",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "system-ui, sans-serif",
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: "12px", color: "#5B6B7A", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
+                  <Filter size={12} aria-hidden="true" /> Filtrar para uma vaga específica
+                  {isFilteringForVaga && !showVagaFilters && (
+                    <span style={{ color: "#0F3D63", fontWeight: "500" }}>
+                      · {[filterLevel && NIVEIS.find((n) => n.id === filterLevel)?.label, filterHorarios.length > 0 && filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", ")].filter(Boolean).join(" · ")} ativo
+                    </span>
+                  )}
+                </span>
+                {showVagaFilters ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+              </button>
+
+              {showVagaFilters && (
+                <div style={{ padding: "0 14px 12px" }}>
+                  <p style={{ margin: "0 0 8px", fontSize: "12px", color: "#5B6B7A", fontFamily: "system-ui, sans-serif" }}>
+                    Define quem pode ser chamado, dentro dos que se encaixam.
+                  </p>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
+                    <button
+                      className="fc-btn"
+                      style={{ padding: "4px 10px", fontSize: "12px", background: !filterLevel ? "#F4F7FA" : "#fff", borderColor: !filterLevel ? "#8FA1B0" : "#C3D3E0" }}
+                      onClick={() => { setFilterLevel(""); setVisibleCount(PAGE_SIZE); }}
+                    >
+                      Todos os níveis
+                    </button>
+                    {NIVEIS.map((n) => (
+                      <button
+                        key={n.id}
+                        className="fc-btn"
+                        style={{
+                          padding: "4px 10px",
+                          fontSize: "12px",
+                          background: filterLevel === n.id ? n.bg : "#fff",
+                          color: filterLevel === n.id ? n.fg : "#10314F",
+                          borderColor: filterLevel === n.id ? n.fg : "#C3D3E0",
+                        }}
+                        onClick={() => { setFilterLevel(filterLevel === n.id ? "" : n.id); setVisibleCount(PAGE_SIZE); }}
+                      >
+                        {n.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {HORARIOS.map((h) => {
+                      const active = filterHorarios.includes(h.id);
+                      return (
+                        <button
+                          key={h.id}
+                          className="fc-btn"
+                          style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#C3D3E0" }}
+                          onClick={() => {
+                            setFilterHorarios((prev) => (active ? prev.filter((x) => x !== h.id) : [...prev, h.id]));
+                            setVisibleCount(PAGE_SIZE);
+                          }}
+                        >
+                          <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
+                          {h.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {isFilteringForVaga && (
+                    <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#0F3D63" }}>
+                      Mostrando só quem se encaixa nesse filtro — a ordem de chamada respeita a posição deles entre si, não a fila inteira.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", overflow: "hidden" }}>
             {filteredQueue.length === 0 && (
               <p style={{ padding: "24px", textAlign: "center", color: "#8FA1B0", fontSize: "14px", fontFamily: "system-ui, sans-serif" }}>
@@ -784,7 +927,8 @@ export default function FilaClube() {
             )}
             {visibleQueue.map((p) => {
               const i = queue.findIndex((x) => x.id === p.id);
-              const canCall = queue.slice(0, i).every((x) => x.status === "chamado");
+              const posInEligible = vagaEligibleQueue.findIndex((x) => x.id === p.id);
+              const canCall = posInEligible === -1 ? false : vagaEligibleQueue.slice(0, posInEligible).every((x) => x.status === "chamado");
               return (
                 <div key={p.id} className="fc-queue-row">
                   <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: "#E3EEF7", color: "#0F3D63", fontSize: "13px", fontWeight: "600", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -798,6 +942,29 @@ export default function FilaClube() {
                           <Clock size={11} aria-hidden="true" /> Aguardando resposta
                         </span>
                       )}
+                      {p.level && NIVEIS.find((n) => n.id === p.level) && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: "500",
+                            color: NIVEIS.find((n) => n.id === p.level).fg,
+                            background: NIVEIS.find((n) => n.id === p.level).bg,
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                          }}
+                        >
+                          {NIVEIS.find((n) => n.id === p.level).label}
+                        </span>
+                      )}
+                      {(p.availability || []).map((a) => {
+                        const h = HORARIOS.find((x) => x.id === a);
+                        if (!h) return null;
+                        return (
+                          <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F4F7FA", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                            <h.Icon size={11} aria-hidden="true" /> {h.label}
+                          </span>
+                        );
+                      })}
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
                       {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
@@ -865,10 +1032,64 @@ export default function FilaClube() {
                 </button>
               ) : (
                 <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "8px", marginBottom: "10px" }}>
+                  <div className="fc-form-grid" style={{ marginBottom: "10px" }}>
                     <input className="fc-input" placeholder="Nome completo" value={newMember.full} onChange={(e) => { setNewMember({ ...newMember, full: e.target.value }); setAddMemberError(""); }} />
                     <input className="fc-input" placeholder="Matrícula" value={newMember.matricula} onChange={(e) => { setNewMember({ ...newMember, matricula: e.target.value }); setAddMemberError(""); }} />
                     <input className="fc-input" placeholder="Telefone (opcional)" maxLength={15} value={newMember.phone} onChange={(e) => { setNewMember({ ...newMember, phone: formatPhone(e.target.value) }); setAddMemberError(""); }} />
+                  </div>
+                  <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "10px" }}>
+                    <div>
+                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível (opcional)</p>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {NIVEIS.map((n) => (
+                          <button
+                            key={n.id}
+                            className="fc-btn"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "12px",
+                              background: newMember.level === n.id ? n.bg : "#fff",
+                              color: newMember.level === n.id ? n.fg : "#10314F",
+                              borderColor: newMember.level === n.id ? n.fg : "#C3D3E0",
+                            }}
+                            onClick={() => setNewMember({ ...newMember, level: newMember.level === n.id ? "" : n.id })}
+                          >
+                            {n.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis (opcional)</p>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {HORARIOS.map((h) => {
+                          const active = newMember.availability.includes(h.id);
+                          return (
+                            <button
+                              key={h.id}
+                              className="fc-btn"
+                              style={{
+                                padding: "4px 10px",
+                                fontSize: "12px",
+                                background: active ? "#EAF1F8" : "#fff",
+                                borderColor: active ? "#0F3D63" : "#C3D3E0",
+                              }}
+                              onClick={() =>
+                                setNewMember({
+                                  ...newMember,
+                                  availability: active
+                                    ? newMember.availability.filter((a) => a !== h.id)
+                                    : [...newMember.availability, h.id],
+                                })
+                              }
+                            >
+                              <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
+                              {h.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                   {addMemberError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{addMemberError}</p>}
                   <div style={{ display: "flex", gap: "8px" }}>
