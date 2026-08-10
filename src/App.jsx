@@ -482,6 +482,8 @@ export default function FilaClube() {
     const missing = [];
     if (!newMember.full.trim()) missing.push("nome completo");
     if (!newMember.matricula.trim()) missing.push("matrícula");
+    if (!newMember.level) missing.push("nível");
+    if (!newMember.availability || newMember.availability.length === 0) missing.push("ao menos um horário disponível");
     if (missing.length > 0) {
       setAddMemberError(`Preencha: ${missing.join(", ")}.`);
       return;
@@ -524,6 +526,8 @@ export default function FilaClube() {
     const missing = [];
     if (!editDraft.full.trim()) missing.push("nome completo");
     if (!editDraft.matricula.trim()) missing.push("matrícula");
+    if (!editDraft.level) missing.push("nível");
+    if (!editDraft.availability || editDraft.availability.length === 0) missing.push("ao menos um horário disponível");
     if (missing.length > 0) {
       setEditError(`Preencha: ${missing.join(", ")}.`);
       return;
@@ -1138,7 +1142,7 @@ export default function FilaClube() {
                   </div>
                   <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "10px" }}>
                     <div>
-                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível (opcional)</p>
+                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível (obrigatório)</p>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {NIVEIS.map((n) => (
                           <button
@@ -1159,7 +1163,7 @@ export default function FilaClube() {
                       </div>
                     </div>
                     <div>
-                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis (opcional)</p>
+                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis (obrigatório, escolha ao menos 1)</p>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {HORARIOS.map((h) => {
                           const active = newMember.availability.includes(h.id);
@@ -1290,7 +1294,7 @@ export default function FilaClube() {
 
             <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "10px" }}>
               <div>
-                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível</p>
+                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível (obrigatório)</p>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {NIVEIS.map((n) => (
                     <button
@@ -1311,7 +1315,7 @@ export default function FilaClube() {
                 </div>
               </div>
               <div>
-                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis</p>
+                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis (obrigatório, escolha ao menos 1)</p>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {HORARIOS.map((h) => {
                     const active = editDraft.availability.includes(h.id);
