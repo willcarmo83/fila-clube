@@ -24,6 +24,7 @@ import {
   Moon,
   CalendarDays,
   Filter,
+  Pencil,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
@@ -160,6 +161,10 @@ export default function FilaClube() {
   const [queueSearch, setQueueSearch] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
   const [showVagaFilters, setShowVagaFilters] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editDraft, setEditDraft] = useState({ full: "", matricula: "", phone: "", level: "", availability: [] });
+  const [editReason, setEditReason] = useState("");
+  const [editError, setEditError] = useState("");
   const [filterHorarios, setFilterHorarios] = useState([]);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [showLogsView, setShowLogsView] = useState(false);
@@ -501,6 +506,77 @@ export default function FilaClube() {
     setShowAddForm(false);
   }
 
+  function openEditModal(index) {
+    const p = queue[index];
+    setEditingIndex(index);
+    setEditDraft({
+      full: p.full,
+      matricula: p.matricula,
+      phone: p.phone || "",
+      level: p.level || "",
+      availability: p.availability || [],
+    });
+    setEditReason("");
+    setEditError("");
+  }
+
+  function saveEditMember() {
+    const missing = [];
+    if (!editDraft.full.trim()) missing.push("nome completo");
+    if (!editDraft.matricula.trim()) missing.push("matrícula");
+    if (missing.length > 0) {
+      setEditError(`Preencha: ${missing.join(", ")}.`);
+      return;
+    }
+    if (!editReason.trim()) {
+      setEditError("Informe o motivo da alteração.");
+      return;
+    }
+
+    const arr = [...(dataRef.current.queues[modality] || [])];
+    const old = arr[editingIndex];
+    const updated = {
+      ...old,
+      full: editDraft.full.trim(),
+      matricula: editDraft.matricula.trim(),
+      phone: formatPhone(editDraft.phone || ""),
+      level: editDraft.level || "",
+      availability: editDraft.availability || [],
+    };
+
+    const changes = [];
+    if (old.full !== updated.full) changes.push(`nome alterado de "${old.full}" para "${updated.full}"`);
+    if (old.matricula !== updated.matricula) changes.push(`matrícula alterada de "${old.matricula}" para "${updated.matricula}"`);
+    if ((old.phone || "") !== (updated.phone || "")) {
+      changes.push(`telefone alterado de "${old.phone || "não informado"}" para "${updated.phone || "não informado"}"`);
+    }
+    if ((old.level || "") !== (updated.level || "")) {
+      const oldLabel = NIVEIS.find((n) => n.id === old.level)?.label || "não informado";
+      const newLabel = NIVEIS.find((n) => n.id === updated.level)?.label || "não informado";
+      changes.push(`nível alterado de "${oldLabel}" para "${newLabel}"`);
+    }
+    const oldAvail = (old.availability || []).slice().sort().join(",");
+    const newAvail = (updated.availability || []).slice().sort().join(",");
+    if (oldAvail !== newAvail) {
+      const oldLabels = (old.availability || []).map((a) => HORARIOS.find((h) => h.id === a)?.label).filter(Boolean).join(", ") || "nenhum";
+      const newLabels = (updated.availability || []).map((a) => HORARIOS.find((h) => h.id === a)?.label).filter(Boolean).join(", ") || "nenhum";
+      changes.push(`horários disponíveis alterados de "${oldLabels}" para "${newLabels}"`);
+    }
+
+    if (changes.length === 0) {
+      setEditError("Nenhuma alteração detectada nos campos.");
+      return;
+    }
+
+    arr[editingIndex] = updated;
+    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
+    next = pushLog(next, `Dados de ${updated.full} foram atualizados: ${changes.join("; ")}`, editReason.trim());
+    persist(next);
+    setEditingIndex(null);
+    setEditReason("");
+    setEditError("");
+  }
+
   async function tryLogin() {
     setPwError("");
     if (!emailInput.trim() || !pwInput) {
@@ -580,22 +656,25 @@ export default function FilaClube() {
   }
 
   return (
-    <div style={{ fontFamily: "'Georgia', 'Times New Roman', serif", background: "#F4F7FA", minHeight: "600px", borderRadius: "16px", overflow: "hidden", border: "1px solid #D7E2EC" }}>
+    <div style={{ fontFamily: "'Georgia', 'Times New Roman', serif", background: "#FAF7F0", minHeight: "600px", borderRadius: "16px", overflow: "hidden", border: "1px solid #E7DFC8", boxShadow: "0 1px 3px rgba(15,61,99,0.06), 0 20px 48px -24px rgba(15,61,99,0.28)" }}>
       <style>{`
-        .fc-btn { font-family: system-ui, sans-serif; border: 1px solid #C3D3E0; background: #fff; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .15s; color: #10314F; }
-        .fc-btn:hover { background: #EAF1F8; }
-        .fc-btn:active { transform: scale(0.98); }
+        .fc-btn { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; background: #fff; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all .15s ease; color: #10314F; }
+        .fc-btn:hover { background: #F3EFE2; border-color: #C9BD98; }
+        .fc-btn:active { transform: scale(0.97); }
         .fc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .fc-btn-primary { background: #0F3D63; color: #fff; border-color: #0F3D63; }
-        .fc-btn-primary:hover { background: #0B2E4C; }
+        .fc-btn-primary { background: #0F3D63; color: #fff; border-color: #0F3D63; box-shadow: 0 1px 2px rgba(15,61,99,0.3); }
+        .fc-btn-primary:hover { background: #0B2E4C; border-color: #0B2E4C; }
         .fc-btn-danger { color: #A32D2D; border-color: #E3B9B9; }
-        .fc-btn-danger:hover { background: #FBEAEA; }
-        .fc-input { font-family: system-ui, sans-serif; border: 1px solid #C3D3E0; border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; box-sizing: border-box; }
-        .fc-input:focus { outline: 2px solid #3C7FB1; outline-offset: 1px; }
-        .fc-tab { font-family: system-ui, sans-serif; font-size: 13px; padding: 8px 16px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; color: #5B6B7A; background: transparent; }
-        .fc-tab-active { background: #0F3D63; color: #fff; }
-        .fc-select { font-family: system-ui, sans-serif; border: 1px solid #C3D3E0; border-radius: 6px; padding: 7px 10px; font-size: 13px; background: #fff; color: #10314F; }
-        .fc-queue-row { display: flex; align-items: flex-start; gap: 14px; padding: 12px 16px; border-bottom: 1px solid #EAF0F5; font-family: system-ui, sans-serif; flex-wrap: wrap; }
+        .fc-btn-danger:hover { background: #FBEAEA; border-color: #D99; }
+        .fc-input { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: 8px 10px; font-size: 13px; width: 100%; box-sizing: border-box; transition: border-color .15s ease, box-shadow .15s ease; }
+        .fc-input:focus { outline: none; border-color: #B08A3C; box-shadow: 0 0 0 3px rgba(176,138,60,0.18); }
+        .fc-tab { font-family: system-ui, sans-serif; font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; color: #5B6B7A; background: transparent; transition: all .15s ease; }
+        .fc-tab:hover { background: #F3EFE2; color: #10314F; }
+        .fc-tab-active { background: #0F3D63; color: #fff; box-shadow: 0 2px 6px rgba(15,61,99,0.35); }
+        .fc-tab-active:hover { background: #0B2E4C; color: #fff; }
+        .fc-select { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: 7px 10px; font-size: 13px; background: #fff; color: #10314F; }
+        .fc-queue-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border-bottom: 1px solid #F0EBDD; font-family: system-ui, sans-serif; flex-wrap: wrap; transition: background .15s ease; }
+        .fc-queue-row:hover { background: #FCFAF4; }
         .fc-queue-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
         .fc-form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
         @media (max-width: 560px) {
@@ -605,20 +684,20 @@ export default function FilaClube() {
         }
       `}</style>
 
-      <div style={{ background: "#0F3D63", color: "#fff", padding: "20px 24px" }}>
+      <div style={{ background: "linear-gradient(155deg, #123E63 0%, #0B2E4C 100%)", color: "#fff", padding: "22px 24px 20px", borderBottom: "2px solid #B08A3C" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
           <div>
-            <p style={{ fontSize: "11px", letterSpacing: "2px", textTransform: "uppercase", color: "#9FC6E8", margin: "0 0 4px", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#D9BD82", margin: "0 0 6px", fontFamily: "system-ui, sans-serif", fontWeight: "600" }}>
               Country Clube
             </p>
-            <h1 style={{ fontSize: "24px", fontWeight: "500", margin: 0 }}>
+            <h1 style={{ fontSize: "26px", fontWeight: "500", margin: 0, letterSpacing: "0.2px" }}>
               {showLogsView ? "Histórico de alterações" : showManageModalidades ? "Gerenciar modalidades" : "Fila de espera — atividades esportivas"}
             </h1>
           </div>
           <div style={{ fontFamily: "system-ui, sans-serif" }}>
             {isAdmin ? (
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span style={{ fontSize: "12px", color: "#CFE3F2", display: "flex", alignItems: "center", gap: "5px" }}>
+                <span style={{ fontSize: "12px", color: "#D9BD82", display: "flex", alignItems: "center", gap: "5px", fontWeight: "500" }}>
                   <ShieldCheck size={14} aria-hidden="true" /> {adminName} (administração)
                 </span>
                 <button className="fc-btn" onClick={logout}>Sair</button>
@@ -661,7 +740,7 @@ export default function FilaClube() {
             {filteredLogs.length} {filteredLogs.length === 1 ? "registro encontrado" : "registros encontrados"}
           </p>
 
-          <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "4px 16px" }}>
+          <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
             {visibleLogs.length === 0 && (
               <p style={{ padding: "20px 0", fontSize: "13px", color: "#8FA1B0", fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
                 Nenhum registro encontrado para esse filtro.
@@ -709,13 +788,13 @@ export default function FilaClube() {
             <ArrowLeft size={14} aria-hidden="true" /> Voltar para a fila
           </button>
 
-          <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+          <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades cadastradas</p>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
               {modalidades.map((m) => {
                 const count = (data.queues[m.id] || []).length;
                 return (
-                  <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F4F7FA", borderRadius: "6px" }}>
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F5F0E2", borderRadius: "6px" }}>
                     <span style={{ fontSize: "13px", color: "#10314F" }}>
                       {m.label} <span style={{ color: "#8FA1B0" }}>· {count} na fila</span>
                     </span>
@@ -750,7 +829,7 @@ export default function FilaClube() {
                 <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades arquivadas</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
                   {allModalidades.filter((m) => m.archived).map((m) => (
-                    <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F4F7FA", borderRadius: "6px", opacity: 0.75 }}>
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F5F0E2", borderRadius: "6px", opacity: 0.75 }}>
                       <span style={{ fontSize: "13px", color: "#10314F" }}>{m.label}</span>
                       <button className="fc-btn" style={{ padding: "4px 8px", fontSize: "12px" }} onClick={() => restoreModalidade(m.id)}>
                         Restaurar
@@ -832,7 +911,7 @@ export default function FilaClube() {
           </div>
 
           {isAdmin && (
-            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", overflow: "hidden" }}>
+            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
               <button
                 onClick={() => setShowVagaFilters((v) => !v)}
                 style={{
@@ -868,7 +947,7 @@ export default function FilaClube() {
                   <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
                     <button
                       className="fc-btn"
-                      style={{ padding: "4px 10px", fontSize: "12px", background: !filterLevel ? "#F4F7FA" : "#fff", borderColor: !filterLevel ? "#8FA1B0" : "#C3D3E0" }}
+                      style={{ padding: "4px 10px", fontSize: "12px", background: !filterLevel ? "#F5F0E2" : "#fff", borderColor: !filterLevel ? "#8FA1B0" : "#DAD2B8" }}
                       onClick={() => { setFilterLevel(""); setVisibleCount(PAGE_SIZE); }}
                     >
                       Todos os níveis
@@ -882,7 +961,7 @@ export default function FilaClube() {
                           fontSize: "12px",
                           background: filterLevel === n.id ? n.bg : "#fff",
                           color: filterLevel === n.id ? n.fg : "#10314F",
-                          borderColor: filterLevel === n.id ? n.fg : "#C3D3E0",
+                          borderColor: filterLevel === n.id ? n.fg : "#DAD2B8",
                         }}
                         onClick={() => { setFilterLevel(filterLevel === n.id ? "" : n.id); setVisibleCount(PAGE_SIZE); }}
                       >
@@ -897,7 +976,7 @@ export default function FilaClube() {
                         <button
                           key={h.id}
                           className="fc-btn"
-                          style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#C3D3E0" }}
+                          style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#DAD2B8" }}
                           onClick={() => {
                             setFilterHorarios((prev) => (active ? prev.filter((x) => x !== h.id) : [...prev, h.id]));
                             setVisibleCount(PAGE_SIZE);
@@ -919,7 +998,7 @@ export default function FilaClube() {
             </div>
           )}
 
-          <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
             {filteredQueue.length === 0 && (
               <p style={{ padding: "24px", textAlign: "center", color: "#8FA1B0", fontSize: "14px", fontFamily: "system-ui, sans-serif" }}>
                 {queueSearch ? "Nenhum resultado para essa busca." : `Nenhum sócio na fila de ${currentModLabel} no momento.`}
@@ -931,7 +1010,24 @@ export default function FilaClube() {
               const canCall = posInEligible === -1 ? false : vagaEligibleQueue.slice(0, posInEligible).every((x) => x.status === "chamado");
               return (
                 <div key={p.id} className="fc-queue-row">
-                  <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: "#E3EEF7", color: "#0F3D63", fontSize: "13px", fontWeight: "600", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <div
+                    style={{
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "50%",
+                      background: i === 0 ? "#0F3D63" : "#E3EEF7",
+                      color: i === 0 ? "#fff" : "#0F3D63",
+                      fontSize: "13px",
+                      fontWeight: "700",
+                      fontFamily: "Georgia, serif",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      border: "1.5px solid #B08A3C",
+                      boxShadow: i === 0 ? "0 0 0 3px rgba(176,138,60,0.2)" : "none",
+                    }}
+                  >
                     {i + 1}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -960,7 +1056,7 @@ export default function FilaClube() {
                         const h = HORARIOS.find((x) => x.id === a);
                         if (!h) return null;
                         return (
-                          <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F4F7FA", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                          <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
                             <h.Icon size={11} aria-hidden="true" /> {h.label}
                           </span>
                         );
@@ -986,6 +1082,9 @@ export default function FilaClube() {
                   </div>
                   {isAdmin && (
                     <div className="fc-queue-actions">
+                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openEditModal(i)} aria-label="Editar dados do sócio">
+                        <Pencil size={14} aria-hidden="true" />
+                      </button>
                       <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("up", i)} disabled={i === 0} aria-label="Subir posição">
                         <ChevronUp size={14} aria-hidden="true" />
                       </button>
@@ -1031,7 +1130,7 @@ export default function FilaClube() {
                   <Plus size={14} aria-hidden="true" /> Adicionar sócio à fila de {currentModLabel}
                 </button>
               ) : (
-                <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
+                <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "14px 16px", fontFamily: "system-ui, sans-serif" }}>
                   <div className="fc-form-grid" style={{ marginBottom: "10px" }}>
                     <input className="fc-input" placeholder="Nome completo" value={newMember.full} onChange={(e) => { setNewMember({ ...newMember, full: e.target.value }); setAddMemberError(""); }} />
                     <input className="fc-input" placeholder="Matrícula" value={newMember.matricula} onChange={(e) => { setNewMember({ ...newMember, matricula: e.target.value }); setAddMemberError(""); }} />
@@ -1050,7 +1149,7 @@ export default function FilaClube() {
                               fontSize: "12px",
                               background: newMember.level === n.id ? n.bg : "#fff",
                               color: newMember.level === n.id ? n.fg : "#10314F",
-                              borderColor: newMember.level === n.id ? n.fg : "#C3D3E0",
+                              borderColor: newMember.level === n.id ? n.fg : "#DAD2B8",
                             }}
                             onClick={() => setNewMember({ ...newMember, level: newMember.level === n.id ? "" : n.id })}
                           >
@@ -1072,7 +1171,7 @@ export default function FilaClube() {
                                 padding: "4px 10px",
                                 fontSize: "12px",
                                 background: active ? "#EAF1F8" : "#fff",
-                                borderColor: active ? "#0F3D63" : "#C3D3E0",
+                                borderColor: active ? "#0F3D63" : "#DAD2B8",
                               }}
                               onClick={() =>
                                 setNewMember({
@@ -1114,7 +1213,7 @@ export default function FilaClube() {
                 Ver histórico completo
               </button>
             </div>
-            <div style={{ background: "#fff", border: "1px solid #D7E2EC", borderRadius: "12px", padding: "4px 16px" }}>
+            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
               {modalityLogsPreview.length === 0 && (
                 <p style={{ padding: "14px 0", fontSize: "13px", color: "#8FA1B0", fontFamily: "system-ui, sans-serif" }}>Nenhuma alteração registrada ainda.</p>
               )}
@@ -1178,6 +1277,84 @@ export default function FilaClube() {
         </div>
       )}
 
+      {editingIndex !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50, overflowY: "auto" }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(480px, 100%)", fontFamily: "system-ui, sans-serif", margin: "24px 0" }}>
+            <p style={{ margin: "0 0 14px", fontSize: "15px", fontWeight: "500" }}>Editar dados de {queue[editingIndex]?.full}</p>
+
+            <div className="fc-form-grid" style={{ marginBottom: "10px" }}>
+              <input className="fc-input" placeholder="Nome completo" value={editDraft.full} onChange={(e) => { setEditDraft({ ...editDraft, full: e.target.value }); setEditError(""); }} />
+              <input className="fc-input" placeholder="Matrícula" value={editDraft.matricula} onChange={(e) => { setEditDraft({ ...editDraft, matricula: e.target.value }); setEditError(""); }} />
+              <input className="fc-input" placeholder="Telefone (opcional)" maxLength={15} value={editDraft.phone} onChange={(e) => { setEditDraft({ ...editDraft, phone: formatPhone(e.target.value) }); setEditError(""); }} />
+            </div>
+
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "10px" }}>
+              <div>
+                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Nível</p>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {NIVEIS.map((n) => (
+                    <button
+                      key={n.id}
+                      className="fc-btn"
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        background: editDraft.level === n.id ? n.bg : "#fff",
+                        color: editDraft.level === n.id ? n.fg : "#10314F",
+                        borderColor: editDraft.level === n.id ? n.fg : "#DAD2B8",
+                      }}
+                      onClick={() => setEditDraft({ ...editDraft, level: editDraft.level === n.id ? "" : n.id })}
+                    >
+                      {n.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Horários disponíveis</p>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {HORARIOS.map((h) => {
+                    const active = editDraft.availability.includes(h.id);
+                    return (
+                      <button
+                        key={h.id}
+                        className="fc-btn"
+                        style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#DAD2B8" }}
+                        onClick={() =>
+                          setEditDraft({
+                            ...editDraft,
+                            availability: active ? editDraft.availability.filter((a) => a !== h.id) : [...editDraft.availability, h.id],
+                          })
+                        }
+                      >
+                        <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
+                        {h.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>Motivo da alteração (obrigatório)</label>
+            <textarea
+              className="fc-input"
+              rows={2}
+              style={{ resize: "vertical", marginBottom: "6px" }}
+              placeholder="Ex: sócio passou a poder frequentar à noite"
+              value={editReason}
+              onChange={(e) => { setEditReason(e.target.value); setEditError(""); }}
+            />
+            {editError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{editError}</p>}
+
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button className="fc-btn fc-btn-primary" onClick={saveEditMember}>Salvar alterações</button>
+              <button className="fc-btn" onClick={() => { setEditingIndex(null); setEditError(""); }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingResponse && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(420px, 100%)", fontFamily: "system-ui, sans-serif" }}>
@@ -1192,7 +1369,7 @@ export default function FilaClube() {
                 style={{
                   justifyContent: "flex-start",
                   padding: "10px 12px",
-                  borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#C3D3E0",
+                  borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#DAD2B8",
                   background: responseChoice === "aceitou" ? "#EAF1F8" : "#fff",
                 }}
                 onClick={() => { setResponseChoice("aceitou"); setResponseError(""); }}
@@ -1204,7 +1381,7 @@ export default function FilaClube() {
                 style={{
                   justifyContent: "flex-start",
                   padding: "10px 12px",
-                  borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#C3D3E0",
+                  borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#DAD2B8",
                   background: responseChoice === "recusou_fica" ? "#EAF1F8" : "#fff",
                 }}
                 onClick={() => { setResponseChoice("recusou_fica"); setResponseError(""); }}
@@ -1216,7 +1393,7 @@ export default function FilaClube() {
                 style={{
                   justifyContent: "flex-start",
                   padding: "10px 12px",
-                  borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#C3D3E0",
+                  borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#DAD2B8",
                   background: responseChoice === "recusou_sai" ? "#EAF1F8" : "#fff",
                 }}
                 onClick={() => { setResponseChoice("recusou_sai"); setResponseError(""); }}
