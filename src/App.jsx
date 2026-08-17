@@ -34,6 +34,7 @@ import { storage, supabase } from "./storage.js";
 const STORAGE_KEY = "fila-clube-data";
 const PAGE_SIZE = 30;
 const LOG_PAGE_SIZE = 30;
+const IDLE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutos sem atividade
 
 const NIVEIS = [
   { id: "iniciante", label: "Iniciante", bg: "#E3F3EA", fg: "#1F7A45" },
@@ -46,6 +47,12 @@ const HORARIOS = [
   { id: "tarde", label: "Tarde", Icon: Sun },
   { id: "noite", label: "Noite", Icon: Moon },
   { id: "fds", label: "Fim de semana", Icon: CalendarDays },
+];
+
+const FAIXAS_ETARIAS = [
+  { id: "crianca", label: "Criança", bg: "#FDE8E8", fg: "#B03A3A" },
+  { id: "adulto", label: "Adulto", bg: "#E7F0EA", fg: "#2E6B47" },
+  { id: "idoso", label: "Idoso", bg: "#EEE7F7", fg: "#5B3F8C" },
 ];
 
 const DEFAULT_MODALIDADES = [
@@ -136,6 +143,8 @@ export default function FilaClube() {
   const [saveError, setSaveError] = useState(false);
   const [modality, setModality] = useState("tenis");
   const [session, setSession] = useState(null);
+  const [idleLogoutMessage, setIdleLogoutMessage] = useState(false);
+  const idleTimerRef = useRef(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [emailInput, setEmailInput] = useState("");
@@ -154,7 +163,7 @@ export default function FilaClube() {
   const [clearReason, setClearReason] = useState("");
   const [clearError, setClearError] = useState("");
   const [expandedLogDetails, setExpandedLogDetails] = useState({});
-  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "", level: "", availability: [] });
+  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
   const [confirmRemove, setConfirmRemove] = useState(null);
   const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down'|'remove', index }
   const [reasonInput, setReasonInput] = useState("");
@@ -165,9 +174,10 @@ export default function FilaClube() {
   const [responseError, setResponseError] = useState("");
   const [queueSearch, setQueueSearch] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
+  const [filterFaixaEtaria, setFilterFaixaEtaria] = useState("");
   const [showVagaFilters, setShowVagaFilters] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
-  const [editDraft, setEditDraft] = useState({ full: "", matricula: "", phone: "", level: "", availability: [] });
+  const [editDraft, setEditDraft] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
   const [editReason, setEditReason] = useState("");
   const [editError, setEditError] = useState("");
   const [filterHorarios, setFilterHorarios] = useState([]);
@@ -188,6 +198,29 @@ export default function FilaClube() {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  // Logout automático por inatividade — protege contra a tela ficar
+  // logada sem querer num computador compartilhado (ex: recepção/secretaria).
+  useEffect(() => {
+    if (!session) return;
+
+    function resetIdleTimer() {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(async () => {
+        await supabase.auth.signOut();
+        setIdleLogoutMessage(true);
+      }, IDLE_TIMEOUT_MS);
+    }
+
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((ev) => window.addEventListener(ev, resetIdleTimer));
+    resetIdleTimer();
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, resetIdleTimer));
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!authChecked) return;
@@ -281,6 +314,7 @@ export default function FilaClube() {
     setQueueSearch("");
     setFilterLevel("");
     setFilterHorarios([]);
+    setFilterFaixaEtaria("");
   }, [modality]);
 
   async function persist(next) {
@@ -446,6 +480,7 @@ export default function FilaClube() {
     const filterParts = [];
     if (filterLevel) filterParts.push(NIVEIS.find((n) => n.id === filterLevel)?.label);
     if (filterHorarios.length > 0) filterParts.push(filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "));
+    if (filterFaixaEtaria) filterParts.push(FAIXAS_ETARIAS.find((f) => f.id === filterFaixaEtaria)?.label);
     const filterNote = filterParts.length > 0 ? ` (chamado dentro do filtro: ${filterParts.join(" · ")})` : "";
     next = pushLog(next, `${person.full} foi chamado para vaga disponível${filterNote}`, "Chamada de vaga disponível — aguardando resposta");
     persist(next);
@@ -519,13 +554,14 @@ export default function FilaClube() {
         phone: newMember.phone.trim(),
         level: newMember.level || "",
         availability: newMember.availability || [],
+        faixaEtaria: newMember.faixaEtaria || "",
         joinedAt: new Date().toISOString().slice(0, 10),
       },
     ];
     let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
     next = pushLog(next, `${newMember.full.trim()} entrou na fila na posição ${arr.length}`, "Nova inscrição na fila");
     persist(next);
-    setNewMember({ full: "", matricula: "", phone: "", level: "", availability: [] });
+    setNewMember({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
     setAddMemberError("");
     setShowAddForm(false);
   }
@@ -539,6 +575,7 @@ export default function FilaClube() {
       phone: p.phone || "",
       level: p.level || "",
       availability: p.availability || [],
+      faixaEtaria: p.faixaEtaria || "",
     });
     setEditReason("");
     setEditError("");
@@ -568,6 +605,7 @@ export default function FilaClube() {
       phone: formatPhone(editDraft.phone || ""),
       level: editDraft.level || "",
       availability: editDraft.availability || [],
+      faixaEtaria: editDraft.faixaEtaria || "",
     };
 
     const changes = [];
@@ -580,6 +618,11 @@ export default function FilaClube() {
       const oldLabel = NIVEIS.find((n) => n.id === old.level)?.label || "não informado";
       const newLabel = NIVEIS.find((n) => n.id === updated.level)?.label || "não informado";
       changes.push(`nível alterado de "${oldLabel}" para "${newLabel}"`);
+    }
+    if ((old.faixaEtaria || "") !== (updated.faixaEtaria || "")) {
+      const oldLabel = FAIXAS_ETARIAS.find((f) => f.id === old.faixaEtaria)?.label || "não informado";
+      const newLabel = FAIXAS_ETARIAS.find((f) => f.id === updated.faixaEtaria)?.label || "não informado";
+      changes.push(`faixa etária alterada de "${oldLabel}" para "${newLabel}"`);
     }
     const oldAvail = (old.availability || []).slice().sort().join(",");
     const newAvail = (updated.availability || []).slice().sort().join(",");
@@ -642,23 +685,25 @@ export default function FilaClube() {
       const matchesSearch = !q || nameForSearch.includes(q) || (p.matricula || "").includes(q);
       const matchesLevel = !filterLevel || p.level === filterLevel;
       const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
-      return matchesSearch && matchesLevel && matchesHorario;
+      const matchesFaixaEtaria = !filterFaixaEtaria || p.faixaEtaria === filterFaixaEtaria;
+      return matchesSearch && matchesLevel && matchesHorario && matchesFaixaEtaria;
     });
-  }, [queue, queueSearch, filterLevel, filterHorarios]);
+  }, [queue, queueSearch, filterLevel, filterHorarios, filterFaixaEtaria]);
 
-  const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0;
+  const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0 || !!filterFaixaEtaria;
 
   // Lista usada para decidir a ordem de chamada — considera só o filtro de
-  // vaga (nível/horário), nunca a busca por texto (que é só pra achar
-  // alguém na tela, não deve interferir em quem pode ser chamado).
+  // vaga (nível/horário/faixa etária), nunca a busca por texto (que é só
+  // pra achar alguém na tela, não deve interferir em quem pode ser chamado).
   const vagaEligibleQueue = useMemo(() => {
     if (!isFilteringForVaga) return queue;
     return queue.filter((p) => {
       const matchesLevel = !filterLevel || p.level === filterLevel;
       const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
-      return matchesLevel && matchesHorario;
+      const matchesFaixaEtaria = !filterFaixaEtaria || p.faixaEtaria === filterFaixaEtaria;
+      return matchesLevel && matchesHorario && matchesFaixaEtaria;
     });
-  }, [queue, filterLevel, filterHorarios, isFilteringForVaga]);
+  }, [queue, filterLevel, filterHorarios, filterFaixaEtaria, isFilteringForVaga]);
 
   const visibleQueue = filteredQueue.slice(0, visibleCount);
 
@@ -798,13 +843,22 @@ export default function FilaClube() {
                 <button className="fc-btn" onClick={logout}>Sair</button>
               </div>
             ) : (
-              <button className="fc-btn" onClick={() => setShowLoginModal(true)}>
+              <button className="fc-btn" onClick={() => { setShowLoginModal(true); setIdleLogoutMessage(false); }}>
                 <Lock size={14} aria-hidden="true" /> Entrar como administração
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {idleLogoutMessage && (
+        <div style={{ margin: "12px 24px 0", padding: "10px 14px", background: "#FBF3D9", border: "1px solid #E8D6A0", borderRadius: "10px", fontFamily: "system-ui, sans-serif", fontSize: "13px", color: "#8A6D1F", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+          <span>Sua sessão de administração foi encerrada automaticamente por inatividade (20 minutos sem uso), por segurança.</span>
+          <button className="fc-btn" style={{ padding: "3px 8px", fontSize: "12px", flexShrink: 0 }} onClick={() => setIdleLogoutMessage(false)}>
+            Entendi
+          </button>
+        </div>
+      )}
 
       {showLogsView ? (
         <div style={{ padding: "20px 24px 24px" }}>
@@ -1142,7 +1196,7 @@ export default function FilaClube() {
                   <Filter size={12} aria-hidden="true" /> Filtrar para uma vaga específica
                   {isFilteringForVaga && !showVagaFilters && (
                     <span style={{ color: "#0F3D63", fontWeight: "500" }}>
-                      · {[filterLevel && NIVEIS.find((n) => n.id === filterLevel)?.label, filterHorarios.length > 0 && filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", ")].filter(Boolean).join(" · ")} ativo
+                      · {[filterLevel && NIVEIS.find((n) => n.id === filterLevel)?.label, filterHorarios.length > 0 && filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "), filterFaixaEtaria && FAIXAS_ETARIAS.find((f) => f.id === filterFaixaEtaria)?.label].filter(Boolean).join(" · ")} ativo
                     </span>
                   )}
                 </span>
@@ -1179,7 +1233,7 @@ export default function FilaClube() {
                       </button>
                     ))}
                   </div>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
                     {HORARIOS.map((h) => {
                       const active = filterHorarios.includes(h.id);
                       return (
@@ -1197,6 +1251,31 @@ export default function FilaClube() {
                         </button>
                       );
                     })}
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    <button
+                      className="fc-btn"
+                      style={{ padding: "4px 10px", fontSize: "12px", background: !filterFaixaEtaria ? "#F5F0E2" : "#fff", borderColor: !filterFaixaEtaria ? "#8FA1B0" : "#DAD2B8" }}
+                      onClick={() => { setFilterFaixaEtaria(""); setVisibleCount(PAGE_SIZE); }}
+                    >
+                      Todas as faixas etárias
+                    </button>
+                    {FAIXAS_ETARIAS.map((f) => (
+                      <button
+                        key={f.id}
+                        className="fc-btn"
+                        style={{
+                          padding: "4px 10px",
+                          fontSize: "12px",
+                          background: filterFaixaEtaria === f.id ? f.bg : "#fff",
+                          color: filterFaixaEtaria === f.id ? f.fg : "#10314F",
+                          borderColor: filterFaixaEtaria === f.id ? f.fg : "#DAD2B8",
+                        }}
+                        onClick={() => { setFilterFaixaEtaria(filterFaixaEtaria === f.id ? "" : f.id); setVisibleCount(PAGE_SIZE); }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
                   </div>
                   {isFilteringForVaga && (
                     <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#0F3D63" }}>
@@ -1274,6 +1353,20 @@ export default function FilaClube() {
                           }}
                         >
                           {NIVEIS.find((n) => n.id === p.level).label}
+                        </span>
+                      )}
+                      {p.faixaEtaria && FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria) && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: "500",
+                            color: FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).fg,
+                            background: FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).bg,
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                          }}
+                        >
+                          {FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).label}
                         </span>
                       )}
                       {(p.availability || []).map((a) => {
@@ -1428,6 +1521,27 @@ export default function FilaClube() {
                         })}
                       </div>
                     </div>
+                    <div>
+                      <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Faixa etária (opcional)</p>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {FAIXAS_ETARIAS.map((f) => (
+                          <button
+                            key={f.id}
+                            className="fc-btn"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "12px",
+                              background: newMember.faixaEtaria === f.id ? f.bg : "#fff",
+                              color: newMember.faixaEtaria === f.id ? f.fg : "#10314F",
+                              borderColor: newMember.faixaEtaria === f.id ? f.fg : "#DAD2B8",
+                            }}
+                            onClick={() => setNewMember({ ...newMember, faixaEtaria: newMember.faixaEtaria === f.id ? "" : f.id })}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   {addMemberError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{addMemberError}</p>}
                   <div style={{ display: "flex", gap: "8px" }}>
@@ -1573,6 +1687,27 @@ export default function FilaClube() {
                       </button>
                     );
                   })}
+                </div>
+              </div>
+              <div>
+                <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#5B6B7A" }}>Faixa etária (opcional)</p>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {FAIXAS_ETARIAS.map((f) => (
+                    <button
+                      key={f.id}
+                      className="fc-btn"
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        background: editDraft.faixaEtaria === f.id ? f.bg : "#fff",
+                        color: editDraft.faixaEtaria === f.id ? f.fg : "#10314F",
+                        borderColor: editDraft.faixaEtaria === f.id ? f.fg : "#DAD2B8",
+                      }}
+                      onClick={() => setEditDraft({ ...editDraft, faixaEtaria: editDraft.faixaEtaria === f.id ? "" : f.id })}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
