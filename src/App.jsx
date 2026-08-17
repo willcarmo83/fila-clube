@@ -25,6 +25,9 @@ import {
   CalendarDays,
   Filter,
   Pencil,
+  LayoutDashboard,
+  AlertTriangle,
+  Layers,
 } from "lucide-react";
 import { storage, supabase } from "./storage.js";
 
@@ -142,6 +145,8 @@ export default function FilaClube() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addMemberError, setAddMemberError] = useState("");
   const [showManageModalidades, setShowManageModalidades] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
   const [manageError, setManageError] = useState("");
   const [confirmRemoveModalidade, setConfirmRemoveModalidade] = useState(null);
@@ -174,76 +179,6 @@ export default function FilaClube() {
   const dataRef = useRef(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const result = await storage.get(STORAGE_KEY);
-        let parsed = result ? JSON.parse(result.value) : SEED;
-        let needsSave = !result;
-        if (!parsed.modalidades) {
-          // Dados salvos antes da modalidade ser configurável: migra usando
-          // a lista padrão, preservando também qualquer fila já existente
-          // que não esteja nessa lista (ex: modalidades antigas com gente
-          // cadastrada continuam acessíveis em vez de somem da tela).
-          const existingKeys = Object.keys(parsed.queues || {});
-          const extras = existingKeys
-            .filter((k) => !DEFAULT_MODALIDADES.some((m) => m.id === k))
-            .map((k) => ({ id: k, label: k }));
-          parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
-          needsSave = true;
-        }
-        // Recupera modalidades removidas antes dessa versão (quando remover
-        // apagava de vez, inclusive do filtro de histórico). Qualquer id
-        // referenciado em filas ou logs que não esteja mais na lista volta
-        // como "arquivada" — some das abas, mas fica filtrável no histórico.
-        const referencedIds = new Set([
-          ...Object.keys(parsed.queues || {}),
-          ...(parsed.logs || []).map((l) => l.modality).filter(Boolean),
-        ]);
-        const knownIds = new Set((parsed.modalidades || []).map((m) => m.id));
-        const toRecover = [...referencedIds].filter((id) => !knownIds.has(id));
-        if (toRecover.length > 0) {
-          parsed = {
-            ...parsed,
-            modalidades: [
-              ...(parsed.modalidades || []),
-              ...toRecover.map((id) => ({
-                id,
-                label: DEFAULT_MODALIDADES.find((m) => m.id === id)?.label || id,
-                archived: true,
-              })),
-            ],
-          };
-          needsSave = true;
-        }
-        // Garante que toda modalidade listada tenha, de fato, uma lista de
-        // fila criada nos dados salvos (mesmo que vazia) — evita que uma
-        // modalidade apareça na aba mas quebre silenciosamente ao tentar
-        // usá-la, caso ela nunca tenha sido persistida antes.
-        const missingQueues = (parsed.modalidades || []).filter((m) => !parsed.queues?.[m.id]);
-        if (missingQueues.length > 0) {
-          const filledQueues = { ...parsed.queues };
-          missingQueues.forEach((m) => {
-            filledQueues[m.id] = [];
-          });
-          parsed = { ...parsed, queues: filledQueues };
-          needsSave = true;
-        }
-        setData(parsed);
-        dataRef.current = parsed;
-        if (needsSave) {
-          await storage.set(STORAGE_KEY, JSON.stringify(parsed));
-        }
-      } catch (e) {
-        console.error("Erro ao carregar dados do Supabase:", e);
-        setData(SEED);
-        dataRef.current = SEED;
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthChecked(true);
@@ -253,6 +188,93 @@ export default function FilaClube() {
     });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!authChecked) return;
+    (async () => {
+      setLoading(true);
+      try {
+        let parsed;
+        if (session) {
+          // Administração autenticada: lê os dados completos direto da
+          // tabela (matrícula, telefone, nome completo e histórico), agora
+          // permitido pela política do banco só pra quem tem login.
+          const result = await storage.get(STORAGE_KEY);
+          parsed = result ? JSON.parse(result.value) : SEED;
+          let needsSave = !result;
+          if (!parsed.modalidades) {
+            // Dados salvos antes da modalidade ser configurável: migra usando
+            // a lista padrão, preservando também qualquer fila já existente
+            // que não esteja nessa lista (ex: modalidades antigas com gente
+            // cadastrada continuam acessíveis em vez de somem da tela).
+            const existingKeys = Object.keys(parsed.queues || {});
+            const extras = existingKeys
+              .filter((k) => !DEFAULT_MODALIDADES.some((m) => m.id === k))
+              .map((k) => ({ id: k, label: k }));
+            parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
+            needsSave = true;
+          }
+          // Recupera modalidades removidas antes dessa versão (quando remover
+          // apagava de vez, inclusive do filtro de histórico). Qualquer id
+          // referenciado em filas ou logs que não esteja mais na lista volta
+          // como "arquivada" — some das abas, mas fica filtrável no histórico.
+          const referencedIds = new Set([
+            ...Object.keys(parsed.queues || {}),
+            ...(parsed.logs || []).map((l) => l.modality).filter(Boolean),
+          ]);
+          const knownIds = new Set((parsed.modalidades || []).map((m) => m.id));
+          const toRecover = [...referencedIds].filter((id) => !knownIds.has(id));
+          if (toRecover.length > 0) {
+            parsed = {
+              ...parsed,
+              modalidades: [
+                ...(parsed.modalidades || []),
+                ...toRecover.map((id) => ({
+                  id,
+                  label: DEFAULT_MODALIDADES.find((m) => m.id === id)?.label || id,
+                  archived: true,
+                })),
+              ],
+            };
+            needsSave = true;
+          }
+          // Garante que toda modalidade listada tenha, de fato, uma lista de
+          // fila criada nos dados salvos (mesmo que vazia) — evita que uma
+          // modalidade apareça na aba mas quebre silenciosamente ao tentar
+          // usá-la, caso ela nunca tenha sido persistida antes.
+          const missingQueues = (parsed.modalidades || []).filter((m) => !parsed.queues?.[m.id]);
+          if (missingQueues.length > 0) {
+            const filledQueues = { ...parsed.queues };
+            missingQueues.forEach((m) => {
+              filledQueues[m.id] = [];
+            });
+            parsed = { ...parsed, queues: filledQueues };
+            needsSave = true;
+          }
+          if (needsSave) {
+            await storage.set(STORAGE_KEY, JSON.stringify(parsed));
+          }
+        } else {
+          // Modo consulta (sem login): busca só o que é seguro através da
+          // Edge Function "public-queue" — nunca lê a tabela diretamente,
+          // então nome completo, matrícula, telefone e histórico nunca
+          // chegam ao navegador de quem não está logado.
+          const { data: pub, error } = await supabase.functions.invoke("public-queue");
+          if (error) throw error;
+          parsed = { modalidades: pub?.modalidades || [], queues: pub?.queues || {}, logs: [] };
+        }
+        setData(parsed);
+        dataRef.current = parsed;
+      } catch (e) {
+        console.error("Erro ao carregar dados:", e);
+        const fallback = session ? SEED : { modalidades: DEFAULT_MODALIDADES, queues: {}, logs: [] };
+        setData(fallback);
+        dataRef.current = fallback;
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [authChecked, session]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
@@ -616,7 +638,8 @@ export default function FilaClube() {
   const filteredQueue = useMemo(() => {
     const q = queueSearch.trim().toLowerCase();
     return queue.filter((p) => {
-      const matchesSearch = !q || p.full.toLowerCase().includes(q) || p.matricula.includes(q);
+      const nameForSearch = (p.full || p.maskedName || "").toLowerCase();
+      const matchesSearch = !q || nameForSearch.includes(q) || (p.matricula || "").includes(q);
       const matchesLevel = !filterLevel || p.level === filterLevel;
       const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
       return matchesSearch && matchesLevel && matchesHorario;
@@ -638,6 +661,71 @@ export default function FilaClube() {
   }, [queue, filterLevel, filterHorarios, isFilteringForVaga]);
 
   const visibleQueue = filteredQueue.slice(0, visibleCount);
+
+  // Estimativa de tempo de espera — só entra em cálculo se houver histórico
+  // suficiente (mínimo 3 vagas preenchidas nessa modalidade). Baseada no
+  // ritmo real de vagas dos últimos meses, nunca numa data específica.
+  const waitEstimate = useMemo(() => {
+    const events = (data?.logs || [])
+      .filter((l) => l.modality === modality && /aceitou a vaga e foi matriculado/.test(l.text))
+      .map((l) => l.ts)
+      .sort((a, b) => a - b);
+    if (events.length < 3) return null;
+    const spanMs = events[events.length - 1] - events[0];
+    const spanMonths = Math.max(spanMs / (1000 * 60 * 60 * 24 * 30), 1);
+    const ratePerMonth = events.length / spanMonths;
+    if (!ratePerMonth || !isFinite(ratePerMonth)) return null;
+    return { count: events.length, spanMonths, ratePerMonth };
+  }, [data, modality]);
+
+  function estimateRangeForPosition(pos) {
+    if (!waitEstimate) return null;
+    const months = pos / waitEstimate.ratePerMonth;
+    const low = Math.max(1, Math.round(months * 0.7));
+    const high = Math.max(low + 1, Math.round(months * 1.4));
+    return { low, high };
+  }
+
+  const ALERT_THRESHOLD_HOURS = 48;
+
+  const dashboardStats = useMemo(() => {
+    if (!data) return null;
+    const now = Date.now();
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const startOfMonthTs = startOfMonth.getTime();
+
+    let totalWaiting = 0;
+    let aguardandoRespostaAgora = 0;
+    const perModalidade = [];
+    const alerts = [];
+
+    modalidades.forEach((m) => {
+      const q = data.queues?.[m.id] || [];
+      totalWaiting += q.length;
+      const aguardando = q.filter((p) => p.status === "chamado").length;
+      aguardandoRespostaAgora += aguardando;
+      perModalidade.push({ id: m.id, label: m.label, queueLength: q.length, aguardando });
+
+      q.forEach((p) => {
+        if (p.status === "chamado" && p.calledAt) {
+          const hoursWaiting = (now - p.calledAt) / (1000 * 60 * 60);
+          if (hoursWaiting >= ALERT_THRESHOLD_HOURS) {
+            alerts.push({ modalityLabel: m.label, modalityId: m.id, name: p.full, hoursWaiting });
+          }
+        }
+      });
+    });
+
+    const vagasPreenchidasMes = (data.logs || []).filter(
+      (l) => /aceitou a vaga e foi matriculado/.test(l.text) && l.ts >= startOfMonthTs
+    ).length;
+
+    alerts.sort((a, b) => b.hoursWaiting - a.hoursWaiting);
+
+    return { totalWaiting, aguardandoRespostaAgora, vagasPreenchidasMes, perModalidade, alerts };
+  }, [data, modalidades]);
 
   const allLogs = data?.logs || [];
   const filteredLogs = useMemo(() => {
@@ -681,6 +769,9 @@ export default function FilaClube() {
         .fc-queue-row:hover { background: #FCFAF4; }
         .fc-queue-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
         .fc-form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
+        .fc-dropdown-item { width: 100%; text-align: left; padding: 10px 14px; border: none; background: #fff; cursor: pointer; font-family: system-ui, sans-serif; font-size: 13px; color: #10314F; display: flex; align-items: center; gap: 8px; transition: background .15s ease; }
+        .fc-dropdown-item:hover { background: #F5F0E2; }
+        .fc-dropdown-item:not(:last-child) { border-bottom: 1px solid #F0EBDD; }
         @media (max-width: 560px) {
           .fc-queue-row { align-items: center; }
           .fc-queue-actions { width: 100%; margin-left: 0; margin-top: 8px; flex-wrap: wrap; }
@@ -695,7 +786,7 @@ export default function FilaClube() {
               Country Clube
             </p>
             <h1 style={{ fontSize: "26px", fontWeight: "500", margin: 0, letterSpacing: "0.2px" }}>
-              {showLogsView ? "Histórico de alterações" : showManageModalidades ? "Gerenciar modalidades" : "Fila de espera — atividades esportivas"}
+              {showLogsView ? "Histórico de alterações" : showManageModalidades ? "Gerenciar modalidades" : showDashboard ? "Painel geral" : "Fila de espera — atividades esportivas"}
             </h1>
           </div>
           <div style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -864,6 +955,93 @@ export default function FilaClube() {
             {manageError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "8px 0 0" }}>{manageError}</p>}
           </div>
         </div>
+      ) : showDashboard ? (
+        <div style={{ padding: "20px 24px 24px" }}>
+          <button className="fc-btn" style={{ marginBottom: "16px" }} onClick={() => setShowDashboard(false)}>
+            <ArrowLeft size={14} aria-hidden="true" /> Voltar para a fila
+          </button>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Sócios esperando (clube todo)</p>
+              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#0F3D63", fontFamily: "Georgia, serif" }}>{dashboardStats?.totalWaiting ?? 0}</p>
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Vagas preenchidas este mês</p>
+              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#1F7A45", fontFamily: "Georgia, serif" }}>{dashboardStats?.vagasPreenchidasMes ?? 0}</p>
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Aguardando resposta agora</p>
+              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#8A6D1F", fontFamily: "Georgia, serif" }}>{dashboardStats?.aguardandoRespostaAgora ?? 0}</p>
+            </div>
+          </div>
+
+          {dashboardStats?.alerts?.length > 0 && (
+            <div style={{ marginBottom: "20px" }}>
+              <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#A32D2D", fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+                <AlertTriangle size={14} aria-hidden="true" /> Aguardando resposta há mais de {ALERT_THRESHOLD_HOURS}h, sem retorno registrado
+              </p>
+              <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: "12px", padding: "4px 14px" }}>
+                {dashboardStats.alerts.map((a, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "10px 0",
+                      borderBottom: i < dashboardStats.alerts.length - 1 ? "1px solid #F0D3D3" : "none",
+                      fontFamily: "system-ui, sans-serif",
+                      fontSize: "13px",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                    }}
+                  >
+                    <span style={{ color: "#7A2323" }}>
+                      <strong>{a.name}</strong> · {a.modalityLabel}
+                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <span style={{ color: "#A32D2D" }}>{Math.round(a.hoursWaiting)}h esperando resposta</span>
+                      <button
+                        className="fc-btn"
+                        style={{ padding: "3px 8px", fontSize: "12px" }}
+                        onClick={() => { setModality(a.modalityId); setShowDashboard(false); }}
+                      >
+                        Ver na fila
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#10314F", fontFamily: "system-ui, sans-serif" }}>Por modalidade</p>
+            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
+              {dashboardStats?.perModalidade.map((m, i) => (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "10px 0",
+                    borderBottom: i < dashboardStats.perModalidade.length - 1 ? "1px solid #F0EBDD" : "none",
+                    fontFamily: "system-ui, sans-serif",
+                    fontSize: "13px",
+                  }}
+                >
+                  <span style={{ color: "#10314F", fontWeight: "500" }}>{m.label}</span>
+                  <span style={{ color: "#5B6B7A" }}>
+                    {m.queueLength} na fila
+                    {m.aguardando > 0 && <span style={{ color: "#8A6D1F" }}> · {m.aguardando} aguardando resposta</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       ) : (
         <>
           <div style={{ padding: "20px 24px 4px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
@@ -877,13 +1055,41 @@ export default function FilaClube() {
               </button>
             ))}
             {isAdmin && (
-              <button
-                className="fc-btn"
-                style={{ padding: "6px 10px", fontSize: "12px", marginLeft: "auto" }}
-                onClick={() => { setShowManageModalidades(true); setManageError(""); }}
-              >
-                <Settings size={13} aria-hidden="true" /> Gerenciar modalidades
-              </button>
+              <div style={{ position: "relative", marginLeft: "auto" }}>
+                <button
+                  className="fc-btn"
+                  style={{ padding: "6px 10px", fontSize: "12px" }}
+                  onClick={() => setToolsMenuOpen((v) => !v)}
+                >
+                  <Settings size={13} aria-hidden="true" /> Ferramentas <ChevronDown size={12} aria-hidden="true" />
+                </button>
+                {toolsMenuOpen && (
+                  <>
+                    <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setToolsMenuOpen(false)} />
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "calc(100% + 6px)",
+                        background: "#fff",
+                        border: "1px solid #EAE2CC",
+                        borderRadius: "10px",
+                        boxShadow: "0 12px 28px -10px rgba(15,61,99,0.35)",
+                        zIndex: 41,
+                        minWidth: "210px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button className="fc-dropdown-item" onClick={() => { setShowDashboard(true); setToolsMenuOpen(false); }}>
+                        <LayoutDashboard size={14} aria-hidden="true" /> Painel geral
+                      </button>
+                      <button className="fc-dropdown-item" onClick={() => { setShowManageModalidades(true); setManageError(""); setToolsMenuOpen(false); }}>
+                        <Layers size={14} aria-hidden="true" /> Gerenciar modalidades
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
 
@@ -908,7 +1114,7 @@ export default function FilaClube() {
             <input
               className="fc-input"
               style={{ paddingLeft: "30px" }}
-              placeholder="Buscar por nome ou matrícula"
+              placeholder={isAdmin ? "Buscar por nome ou matrícula" : "Buscar por nome"}
               value={queueSearch}
               onChange={(e) => { setQueueSearch(e.target.value); setVisibleCount(PAGE_SIZE); }}
             />
@@ -1002,6 +1208,20 @@ export default function FilaClube() {
             </div>
           )}
 
+          {isAdmin && (
+            <div style={{ margin: "0 24px 12px", background: "#FBF3D9", border: "1px solid #E8D6A0", borderRadius: "12px", padding: "10px 14px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: 0, fontSize: "12px", color: "#8A6D1F", display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                <Clock size={13} aria-hidden="true" style={{ marginTop: "1px", flexShrink: 0 }} />
+                <span>
+                  <strong>Estimativa de tempo de espera — visível só para administração (em teste).</strong>{" "}
+                  {waitEstimate
+                    ? `Baseada em ${waitEstimate.count} vagas preenchidas nessa modalidade nos últimos ${Math.round(waitEstimate.spanMonths)} meses. Ainda não é exibida para os sócios até validarmos a precisão.`
+                    : "Ainda não há histórico suficiente nessa modalidade (mínimo de 3 vagas preenchidas) para calcular uma estimativa confiável."}
+                </span>
+              </p>
+            </div>
+          )}
+
           <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
             {filteredQueue.length === 0 && (
               <p style={{ padding: "24px", textAlign: "center", color: "#8FA1B0", fontSize: "14px", fontFamily: "system-ui, sans-serif" }}>
@@ -1036,10 +1256,10 @@ export default function FilaClube() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      {isAdmin ? p.full : maskName(p.full)}
+                      {isAdmin ? p.full : (p.maskedName || maskName(p.full || ""))}
                       {p.status === "chamado" && (
                         <span style={{ fontSize: "11px", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                          <Clock size={11} aria-hidden="true" /> Aguardando resposta
+                          <Clock size={11} aria-hidden="true" /> Aguardando resposta{isAdmin ? ` · ${formatLogTime(p.calledAt)}` : ""}
                         </span>
                       )}
                       {p.level && NIVEIS.find((n) => n.id === p.level) && (
@@ -1068,9 +1288,24 @@ export default function FilaClube() {
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
                       {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
-                      {p.status === "chamado" && isAdmin && ` · chamado ${formatLogTime(p.calledAt)}`}
-                      {isAdmin && p.status !== "chamado" && !canCall && " · aguardando sócios à frente serem chamados"}
                     </p>
+                    {isAdmin && (p.status !== "chamado") && (!canCall || waitEstimate) && (
+                      <p style={{ margin: "4px 0 0", display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {!canCall && (
+                          <span style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                            <Lock size={10} aria-hidden="true" /> Aguardando ordem
+                          </span>
+                        )}
+                        {waitEstimate && (() => {
+                          const range = estimateRangeForPosition(i + 1);
+                          return range ? (
+                            <span style={{ fontSize: "11px", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                              <Clock size={10} aria-hidden="true" /> {range.low}–{range.high} meses (beta)
+                            </span>
+                          ) : null;
+                        })()}
+                      </p>
+                    )}
                     {isAdmin && p.phone && (
                       <p style={{ margin: "2px 0 0", fontSize: "12px" }}>
                         <a
@@ -1204,32 +1439,34 @@ export default function FilaClube() {
             </div>
           )}
 
-          <div style={{ margin: "20px 24px 24px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
-              <p style={{ fontSize: "12px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-                <History size={14} aria-hidden="true" /> Últimas alterações — {currentModLabel}
-              </p>
-              <button
-                className="fc-btn"
-                style={{ padding: "4px 10px", fontSize: "12px" }}
-                onClick={() => { setShowLogsView(true); setLogModalityFilter(modality); setLogSearch(""); setLogVisibleCount(LOG_PAGE_SIZE); }}
-              >
-                Ver histórico completo
-              </button>
+          {isAdmin && (
+            <div style={{ margin: "20px 24px 24px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                <p style={{ fontSize: "12px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <History size={14} aria-hidden="true" /> Últimas alterações — {currentModLabel}
+                </p>
+                <button
+                  className="fc-btn"
+                  style={{ padding: "4px 10px", fontSize: "12px" }}
+                  onClick={() => { setShowLogsView(true); setLogModalityFilter(modality); setLogSearch(""); setLogVisibleCount(LOG_PAGE_SIZE); }}
+                >
+                  Ver histórico completo
+                </button>
+              </div>
+              <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
+                {modalityLogsPreview.length === 0 && (
+                  <p style={{ padding: "14px 0", fontSize: "13px", color: "#8FA1B0", fontFamily: "system-ui, sans-serif" }}>Nenhuma alteração registrada ainda.</p>
+                )}
+                {modalityLogsPreview.map((l, i) => (
+                  <div key={l.id} style={{ padding: "10px 0", borderBottom: i < modalityLogsPreview.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
+                    <span style={{ color: "#10314F" }}>{l.text}</span>
+                    <span style={{ color: "#8FA1B0" }}> · {formatLogTime(l.ts)} · {l.by}</span>
+                    {l.reason && <p style={{ margin: "2px 0 0", color: "#8FA1B0", fontSize: "12px" }}>Motivo: {l.reason}</p>}
+                  </div>
+                ))}
+              </div>
             </div>
-            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
-              {modalityLogsPreview.length === 0 && (
-                <p style={{ padding: "14px 0", fontSize: "13px", color: "#8FA1B0", fontFamily: "system-ui, sans-serif" }}>Nenhuma alteração registrada ainda.</p>
-              )}
-              {modalityLogsPreview.map((l, i) => (
-                <div key={l.id} style={{ padding: "10px 0", borderBottom: i < modalityLogsPreview.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
-                  <span style={{ color: "#10314F" }}>{l.text}</span>
-                  <span style={{ color: "#8FA1B0" }}> · {formatLogTime(l.ts)} · {l.by}</span>
-                  {l.reason && <p style={{ margin: "2px 0 0", color: "#8FA1B0", fontSize: "12px" }}>Motivo: {l.reason}</p>}
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
         </>
       )}
 
