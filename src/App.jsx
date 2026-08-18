@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ChevronUp,
   ChevronDown,
@@ -29,12 +29,13 @@ import {
   AlertTriangle,
   Layers,
 } from "lucide-react";
-import { storage, supabase } from "./storage.js";
+import { supabase, db } from "./storage.js";
 
-const STORAGE_KEY = "fila-clube-data";
 const PAGE_SIZE = 30;
 const LOG_PAGE_SIZE = 30;
 const IDLE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutos sem atividade
+const ALERT_THRESHOLD_HOURS = 48;
+const SEARCH_DEBOUNCE_MS = 350;
 
 const NIVEIS = [
   { id: "iniciante", label: "Iniciante", bg: "#E3F3EA", fg: "#1F7A45" },
@@ -55,41 +56,30 @@ const FAIXAS_ETARIAS = [
   { id: "idoso", label: "Idoso", bg: "#EEE7F7", fg: "#5B3F8C" },
 ];
 
-const DEFAULT_MODALIDADES = [
-  { id: "tenis", label: "Tênis" },
-  { id: "natacao", label: "Natação" },
-  { id: "pilates", label: "Pilates" },
-  { id: "ginastica_artistica", label: "Ginástica artística" },
-];
+function slugify(text) {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 
-const SEED = {
-  modalidades: DEFAULT_MODALIDADES,
-  queues: {
-    tenis: [
-      { id: "t1", full: "Marcelo Andrade", matricula: "4021", phone: "(19) 99101-2233", joinedAt: "2026-02-11" },
-      { id: "t2", full: "Renata Souza", matricula: "3187", phone: "(19) 99202-4455", joinedAt: "2026-03-02" },
-      { id: "t3", full: "Carlos Torres", matricula: "5502", phone: "(19) 99303-6677", joinedAt: "2026-03-20" },
-      { id: "t4", full: "Juliana Ferraz", matricula: "2290", phone: "(19) 99404-8899", joinedAt: "2026-04-05" },
-      { id: "t5", full: "Paulo Mendes", matricula: "6110", phone: "(19) 99505-1122", joinedAt: "2026-05-14" },
-    ],
-    pilates: [
-      { id: "p1", full: "Bianca Ramos", matricula: "1145", phone: "(19) 99111-2222", joinedAt: "2026-01-18" },
-      { id: "p2", full: "Diego Lima", matricula: "4488", phone: "(19) 99222-3333", joinedAt: "2026-02-27" },
-      { id: "p3", full: "Fernanda Klein", matricula: "3390", phone: "(19) 99333-4444", joinedAt: "2026-04-09" },
-    ],
-    ginastica_artistica: [
-      { id: "ga1", full: "Roberto Villela", matricula: "2001", phone: "(19) 99444-5555", joinedAt: "2025-11-30" },
-      { id: "ga2", full: "Simone Prado", matricula: "5540", phone: "(19) 99555-6666", joinedAt: "2026-01-22" },
-      { id: "ga3", full: "André Castro", matricula: "1980", phone: "(19) 99666-7777", joinedAt: "2026-03-15" },
-      { id: "ga4", full: "Helena Gaspar", matricula: "6602", phone: "(19) 99777-8888", joinedAt: "2026-05-01" },
-    ],
-  },
-  logs: [
-    { id: "l1", ts: Date.now() - 86400000 * 2, modality: "tenis", text: "Renata Souza saiu da posição 8 para a posição 2", reason: "Vaga liberada por desistência de outro sócio", by: "Secretaria" },
-    { id: "l2", ts: Date.now() - 86400000 * 3, modality: "pilates", text: "Diego Lima foi chamado para vaga disponível", reason: "Horário de terça 18h ficou livre", by: "Secretaria" },
-    { id: "l3", ts: Date.now() - 86400000 * 5, modality: "ginastica_artistica", text: "André Castro entrou na fila na posição 4", reason: "Solicitação feita na secretaria", by: "Secretaria" },
-  ],
-};
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatLogTime(ts) {
+  const d = new Date(ts);
+  const now = Date.now();
+  const diffH = Math.round((now - ts) / 3600000);
+  if (diffH < 1) return "agora há pouco";
+  if (diffH < 24) return `há ${diffH}h`;
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 
 function formatPhone(value) {
   const digits = value.replace(/\D/g, "").slice(0, 11);
@@ -107,86 +97,22 @@ function whatsappLink(phone) {
   return `https://wa.me/${withCountry}`;
 }
 
-function slugify(text) {
-  return text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-function maskName(full) {
-  const parts = full.trim().split(" ");
-  if (parts.length === 1) return parts[0];
-  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
-}
-
-function formatDate(iso) {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
-
-function formatLogTime(ts) {
-  const d = new Date(ts);
-  const now = Date.now();
-  const diffH = Math.round((now - ts) / 3600000);
-  if (diffH < 1) return "agora há pouco";
-  if (diffH < 24) return `há ${diffH}h`;
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
-
 export default function FilaClube() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saveError, setSaveError] = useState(false);
-  const [modality, setModality] = useState("tenis");
+  // ---------------------------------------------------------------------
+  // Autenticação
+  // ---------------------------------------------------------------------
   const [session, setSession] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [idleLogoutMessage, setIdleLogoutMessage] = useState(false);
   const idleTimerRef = useRef(null);
-  const [authChecked, setAuthChecked] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [emailInput, setEmailInput] = useState("");
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addMemberError, setAddMemberError] = useState("");
-  const [showManageModalidades, setShowManageModalidades] = useState(false);
-  const [showDashboard, setShowDashboard] = useState(false);
-  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
-  const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
-  const [manageError, setManageError] = useState("");
-  const [confirmRemoveModalidade, setConfirmRemoveModalidade] = useState(null);
-  const [confirmClearQueue, setConfirmClearQueue] = useState(null); // id da modalidade, ou null
-  const [clearReason, setClearReason] = useState("");
-  const [clearError, setClearError] = useState("");
-  const [expandedLogDetails, setExpandedLogDetails] = useState({});
-  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
-  const [confirmRemove, setConfirmRemove] = useState(null);
-  const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down'|'remove', index }
-  const [reasonInput, setReasonInput] = useState("");
-  const [reasonError, setReasonError] = useState("");
-  const [pendingResponse, setPendingResponse] = useState(null); // { index }
-  const [responseChoice, setResponseChoice] = useState(null); // 'aceitou' | 'recusou_fica' | 'recusou_sai'
-  const [responseReason, setResponseReason] = useState("");
-  const [responseError, setResponseError] = useState("");
-  const [queueSearch, setQueueSearch] = useState("");
-  const [filterLevel, setFilterLevel] = useState("");
-  const [filterFaixaEtaria, setFilterFaixaEtaria] = useState("");
-  const [showVagaFilters, setShowVagaFilters] = useState(false);
-  const [editingIndex, setEditingIndex] = useState(null);
-  const [editDraft, setEditDraft] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
-  const [editReason, setEditReason] = useState("");
-  const [editError, setEditError] = useState("");
-  const [filterHorarios, setFilterHorarios] = useState([]);
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [showLogsView, setShowLogsView] = useState(false);
-  const [logModalityFilter, setLogModalityFilter] = useState("todas");
-  const [logSearch, setLogSearch] = useState("");
-  const [logVisibleCount, setLogVisibleCount] = useState(LOG_PAGE_SIZE);
-  const dataRef = useRef(null);
+
+  const isAdmin = !!session;
+  const adminName = session?.user?.email || "";
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -199,11 +125,8 @@ export default function FilaClube() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Logout automático por inatividade — protege contra a tela ficar
-  // logada sem querer num computador compartilhado (ex: recepção/secretaria).
   useEffect(() => {
     if (!session) return;
-
     function resetIdleTimer() {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       idleTimerRef.current = setTimeout(async () => {
@@ -211,136 +134,362 @@ export default function FilaClube() {
         setIdleLogoutMessage(true);
       }, IDLE_TIMEOUT_MS);
     }
-
     const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     events.forEach((ev) => window.addEventListener(ev, resetIdleTimer));
     resetIdleTimer();
-
     return () => {
       events.forEach((ev) => window.removeEventListener(ev, resetIdleTimer));
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     };
   }, [session]);
 
+  async function tryLogin() {
+    setPwError("");
+    if (!emailInput.trim() || !pwInput) {
+      setPwError("Informe e-mail e senha.");
+      return;
+    }
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email: emailInput.trim(), password: pwInput });
+    setAuthLoading(false);
+    if (error) {
+      setPwError("E-mail ou senha incorretos.");
+      return;
+    }
+    setShowLoginModal(false);
+    setEmailInput("");
+    setPwInput("");
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+  }
+
+  // ---------------------------------------------------------------------
+  // Modalidades
+  // ---------------------------------------------------------------------
+  const [modalidades, setModalidades] = useState([]);
+  const [modality, setModality] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function reloadModalidades(preferId) {
+    const mods = await db.getModalidades();
+    setModalidades(mods);
+    setModality((prev) => {
+      if (preferId) return preferId;
+      if (prev && mods.some((m) => m.id === prev)) return prev;
+      const firstActive = mods.find((m) => !m.archived);
+      return firstActive ? firstActive.id : mods[0]?.id || "";
+    });
+    return mods;
+  }
+
   useEffect(() => {
     if (!authChecked) return;
     (async () => {
-      setLoading(true);
       try {
-        let parsed;
-        if (session) {
-          // Administração autenticada: lê os dados completos direto da
-          // tabela (matrícula, telefone, nome completo e histórico), agora
-          // permitido pela política do banco só pra quem tem login.
-          const result = await storage.get(STORAGE_KEY);
-          parsed = result ? JSON.parse(result.value) : SEED;
-          let needsSave = !result;
-          if (!parsed.modalidades) {
-            // Dados salvos antes da modalidade ser configurável: migra usando
-            // a lista padrão, preservando também qualquer fila já existente
-            // que não esteja nessa lista (ex: modalidades antigas com gente
-            // cadastrada continuam acessíveis em vez de somem da tela).
-            const existingKeys = Object.keys(parsed.queues || {});
-            const extras = existingKeys
-              .filter((k) => !DEFAULT_MODALIDADES.some((m) => m.id === k))
-              .map((k) => ({ id: k, label: k }));
-            parsed = { ...parsed, modalidades: [...DEFAULT_MODALIDADES, ...extras] };
-            needsSave = true;
-          }
-          // Recupera modalidades removidas antes dessa versão (quando remover
-          // apagava de vez, inclusive do filtro de histórico). Qualquer id
-          // referenciado em filas ou logs que não esteja mais na lista volta
-          // como "arquivada" — some das abas, mas fica filtrável no histórico.
-          const referencedIds = new Set([
-            ...Object.keys(parsed.queues || {}),
-            ...(parsed.logs || []).map((l) => l.modality).filter(Boolean),
-          ]);
-          const knownIds = new Set((parsed.modalidades || []).map((m) => m.id));
-          const toRecover = [...referencedIds].filter((id) => !knownIds.has(id));
-          if (toRecover.length > 0) {
-            parsed = {
-              ...parsed,
-              modalidades: [
-                ...(parsed.modalidades || []),
-                ...toRecover.map((id) => ({
-                  id,
-                  label: DEFAULT_MODALIDADES.find((m) => m.id === id)?.label || id,
-                  archived: true,
-                })),
-              ],
-            };
-            needsSave = true;
-          }
-          // Garante que toda modalidade listada tenha, de fato, uma lista de
-          // fila criada nos dados salvos (mesmo que vazia) — evita que uma
-          // modalidade apareça na aba mas quebre silenciosamente ao tentar
-          // usá-la, caso ela nunca tenha sido persistida antes.
-          const missingQueues = (parsed.modalidades || []).filter((m) => !parsed.queues?.[m.id]);
-          if (missingQueues.length > 0) {
-            const filledQueues = { ...parsed.queues };
-            missingQueues.forEach((m) => {
-              filledQueues[m.id] = [];
-            });
-            parsed = { ...parsed, queues: filledQueues };
-            needsSave = true;
-          }
-          if (needsSave) {
-            await storage.set(STORAGE_KEY, JSON.stringify(parsed));
-          }
-        } else {
-          // Modo consulta (sem login): busca só o que é seguro através da
-          // Edge Function "public-queue" — nunca lê a tabela diretamente,
-          // então nome completo, matrícula, telefone e histórico nunca
-          // chegam ao navegador de quem não está logado.
-          const { data: pub, error } = await supabase.functions.invoke("public-queue");
-          if (error) throw error;
-          parsed = { modalidades: pub?.modalidades || [], queues: pub?.queues || {}, logs: [] };
-        }
-        setData(parsed);
-        dataRef.current = parsed;
+        await reloadModalidades();
       } catch (e) {
-        console.error("Erro ao carregar dados:", e);
-        const fallback = session ? SEED : { modalidades: DEFAULT_MODALIDADES, queues: {}, logs: [] };
-        setData(fallback);
-        dataRef.current = fallback;
+        console.error("Erro ao carregar modalidades:", e);
       } finally {
         setLoading(false);
       }
     })();
-  }, [authChecked, session]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authChecked]);
+
+  const activeModalidades = modalidades.filter((m) => !m.archived);
+  const currentModLabel = modalidades.find((m) => m.id === modality)?.label || "";
+
+  // ---------------------------------------------------------------------
+  // Fila — filtros, busca e paginação (feitos pelo banco)
+  // ---------------------------------------------------------------------
+  const [queueSearchInput, setQueueSearchInput] = useState("");
+  const [queueSearch, setQueueSearch] = useState("");
+  const [filterLevel, setFilterLevel] = useState("");
+  const [filterHorarios, setFilterHorarios] = useState([]);
+  const [filterFaixaEtaria, setFilterFaixaEtaria] = useState("");
+  const [showVagaFilters, setShowVagaFilters] = useState(false);
+
+  const [queueRows, setQueueRows] = useState([]);
+  const [queueTotalCount, setQueueTotalCount] = useState(0);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueLoadingMore, setQueueLoadingMore] = useState(false);
+  const [nextCallableId, setNextCallableId] = useState(null);
+  const [queueError, setQueueError] = useState(false);
+
+  const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0 || !!filterFaixaEtaria;
+  const vagaFilters = { level: filterLevel, horarios: filterHorarios, faixaEtaria: filterFaixaEtaria };
 
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
+    const t = setTimeout(() => setQueueSearch(queueSearchInput), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [queueSearchInput]);
+
+  useEffect(() => {
+    setQueueSearchInput("");
     setQueueSearch("");
     setFilterLevel("");
     setFilterHorarios([]);
     setFilterFaixaEtaria("");
+    setShowVagaFilters(false);
   }, [modality]);
 
-  async function persist(next) {
-    setData(next);
-    dataRef.current = next;
+  async function loadFirstPage() {
+    if (!modality) return;
+    setQueueLoading(true);
+    setQueueError(false);
     try {
-      const result = await storage.set(STORAGE_KEY, JSON.stringify(next));
-      if (!result) setSaveError(true);
-      else setSaveError(false);
+      const { rows, count } = await db.getQueuePage({
+        modalidadeId: modality,
+        isAdmin,
+        offset: 0,
+        limit: PAGE_SIZE,
+        search: queueSearch,
+        filters: vagaFilters,
+      });
+      setQueueRows(rows);
+      setQueueTotalCount(count);
+      if (isAdmin) {
+        const nextId = await db.getNextCallableId(modality, vagaFilters).catch(() => null);
+        setNextCallableId(nextId);
+      } else {
+        setNextCallableId(null);
+      }
     } catch (e) {
-      console.error("Erro ao salvar no Supabase:", e);
-      setSaveError(true);
+      console.error("Erro ao carregar fila:", e);
+      setQueueRows([]);
+      setQueueTotalCount(0);
+      setQueueError(true);
+    } finally {
+      setQueueLoading(false);
     }
   }
 
-  function pushLog(next, text, reason, modalityOverride) {
-    return {
-      ...next,
-      logs: [
-        { id: "l" + Date.now() + Math.random().toString(16).slice(2), ts: Date.now(), modality: modalityOverride || modality, text, reason, by: adminName || "Secretaria" },
-        ...next.logs,
-      ],
-    };
+  useEffect(() => {
+    if (!authChecked || !modality) return;
+    loadFirstPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authChecked, modality, isAdmin, filterLevel, filterHorarios, filterFaixaEtaria, queueSearch]);
+
+  async function loadMoreQueue() {
+    setQueueLoadingMore(true);
+    try {
+      const { rows } = await db.getQueuePage({
+        modalidadeId: modality,
+        isAdmin,
+        offset: queueRows.length,
+        limit: PAGE_SIZE,
+        search: queueSearch,
+        filters: vagaFilters,
+      });
+      setQueueRows((prev) => [...prev, ...rows]);
+    } catch (e) {
+      console.error("Erro ao carregar mais sócios:", e);
+    } finally {
+      setQueueLoadingMore(false);
+    }
   }
 
-  function addModalidade() {
+  async function refreshQueue() {
+    const currentLen = Math.max(queueRows.length, PAGE_SIZE);
+    try {
+      const { rows, count } = await db.getQueuePage({
+        modalidadeId: modality,
+        isAdmin,
+        offset: 0,
+        limit: currentLen,
+        search: queueSearch,
+        filters: vagaFilters,
+      });
+      setQueueRows(rows);
+      setQueueTotalCount(count);
+      if (isAdmin) {
+        const nextId = await db.getNextCallableId(modality, vagaFilters).catch(() => null);
+        setNextCallableId(nextId);
+      }
+    } catch (e) {
+      console.error("Erro ao atualizar fila:", e);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Log — resumo (preview) e tela completa
+  // ---------------------------------------------------------------------
+  const [modalityLogsPreview, setModalityLogsPreview] = useState([]);
+  const [showLogsView, setShowLogsView] = useState(false);
+  const [logModalityFilter, setLogModalityFilter] = useState("todas");
+  const [logSearchInput, setLogSearchInput] = useState("");
+  const [logSearch, setLogSearch] = useState("");
+  const [logRows, setLogRows] = useState([]);
+  const [logTotalCount, setLogTotalCount] = useState(0);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logLoadingMore, setLogLoadingMore] = useState(false);
+  const [expandedLogDetails, setExpandedLogDetails] = useState({});
+
+  async function refreshRecentLogs() {
+    if (!isAdmin || !modality) return;
+    try {
+      const rows = await db.getRecentLogs(modality, 5);
+      setModalityLogsPreview(rows);
+    } catch (e) {
+      console.error("Erro ao carregar histórico recente:", e);
+    }
+  }
+
+  useEffect(() => {
+    refreshRecentLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modality, isAdmin]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setLogSearch(logSearchInput), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [logSearchInput]);
+
+  async function loadFirstLogPage() {
+    setLogLoading(true);
+    try {
+      const { rows, count } = await db.getLogsPage({
+        modalidadeId: logModalityFilter,
+        search: logSearch,
+        offset: 0,
+        limit: LOG_PAGE_SIZE,
+      });
+      setLogRows(rows);
+      setLogTotalCount(count);
+    } catch (e) {
+      console.error("Erro ao carregar histórico:", e);
+      setLogRows([]);
+      setLogTotalCount(0);
+    } finally {
+      setLogLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!showLogsView) return;
+    loadFirstLogPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLogsView, logModalityFilter, logSearch]);
+
+  async function loadMoreLogs() {
+    setLogLoadingMore(true);
+    try {
+      const { rows } = await db.getLogsPage({
+        modalidadeId: logModalityFilter,
+        search: logSearch,
+        offset: logRows.length,
+        limit: LOG_PAGE_SIZE,
+      });
+      setLogRows((prev) => [...prev, ...rows]);
+    } catch (e) {
+      console.error("Erro ao carregar mais registros:", e);
+    } finally {
+      setLogLoadingMore(false);
+    }
+  }
+
+  function openLogsView() {
+    setShowLogsView(true);
+    setLogModalityFilter(modality);
+    setLogSearchInput("");
+    setLogSearch("");
+  }
+
+  // ---------------------------------------------------------------------
+  // Estimativa de tempo de espera (beta, admin)
+  // ---------------------------------------------------------------------
+  const [waitEstimate, setWaitEstimate] = useState(null);
+
+  useEffect(() => {
+    if (!isAdmin || !modality) {
+      setWaitEstimate(null);
+      return;
+    }
+    (async () => {
+      try {
+        const events = await db.getVagaFillEvents(modality);
+        if (events.length < 3) {
+          setWaitEstimate(null);
+          return;
+        }
+        const spanMs = events[events.length - 1] - events[0];
+        const spanMonths = Math.max(spanMs / (1000 * 60 * 60 * 24 * 30), 1);
+        const ratePerMonth = events.length / spanMonths;
+        if (!ratePerMonth || !isFinite(ratePerMonth)) {
+          setWaitEstimate(null);
+          return;
+        }
+        setWaitEstimate({ count: events.length, spanMonths, ratePerMonth });
+      } catch (e) {
+        console.error("Erro ao calcular estimativa:", e);
+        setWaitEstimate(null);
+      }
+    })();
+  }, [isAdmin, modality]);
+
+  function estimateRangeForPosition(pos) {
+    if (!waitEstimate) return null;
+    const months = pos / waitEstimate.ratePerMonth;
+    const low = Math.max(1, Math.round(months * 0.7));
+    const high = Math.max(low + 1, Math.round(months * 1.4));
+    return { low, high };
+  }
+
+  // ---------------------------------------------------------------------
+  // Painel geral
+  // ---------------------------------------------------------------------
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showDashboard) return;
+    (async () => {
+      setDashboardLoading(true);
+      try {
+        const stats = await db.getDashboardStats(activeModalidades);
+        setDashboardStats(stats);
+      } catch (e) {
+        console.error("Erro ao carregar painel:", e);
+      } finally {
+        setDashboardLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDashboard]);
+
+  // ---------------------------------------------------------------------
+  // Menu de ferramentas / gestão de modalidades
+  // ---------------------------------------------------------------------
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [showManageModalidades, setShowManageModalidades] = useState(false);
+  const [newModalidadeLabel, setNewModalidadeLabel] = useState("");
+  const [manageError, setManageError] = useState("");
+  const [confirmRemoveModalidade, setConfirmRemoveModalidade] = useState(null);
+  const [confirmClearQueue, setConfirmClearQueue] = useState(null);
+  const [clearReason, setClearReason] = useState("");
+  const [clearError, setClearError] = useState("");
+  const [modalidadeQueueCounts, setModalidadeQueueCounts] = useState({});
+
+  useEffect(() => {
+    if (!showManageModalidades) return;
+    (async () => {
+      const counts = {};
+      for (const m of modalidades) {
+        try {
+          const { count } = await supabase.from("queue_entries").select("id", { count: "exact", head: true }).eq("modalidade_id", m.id);
+          counts[m.id] = count || 0;
+        } catch (e) {
+          counts[m.id] = 0;
+        }
+      }
+      setModalidadeQueueCounts(counts);
+    })();
+  }, [showManageModalidades, modalidades]);
+
+  async function addModalidade() {
     const label = newModalidadeLabel.trim();
     if (!label) {
       setManageError("Informe o nome da modalidade.");
@@ -351,191 +500,98 @@ export default function FilaClube() {
       setManageError("Nome inválido, tente usar letras e números.");
       return;
     }
-    if (allModalidades.some((m) => m.id === id)) {
+    if (modalidades.some((m) => m.id === id)) {
       setManageError("Já existe uma modalidade com esse nome (ativa ou arquivada).");
       return;
     }
-    const nextModalidades = [...allModalidades, { id, label }];
-    let next = {
-      ...dataRef.current,
-      modalidades: nextModalidades,
-      queues: { ...dataRef.current.queues, [id]: [] },
-    };
-    next = pushLog(next, `Modalidade "${label}" foi criada`, "Nova modalidade adicionada pela administração", id);
-    persist(next);
-    setNewModalidadeLabel("");
-    setManageError("");
-    setModality(id);
-  }
-
-  function removeModalidade(id) {
-    const item = allModalidades.find((m) => m.id === id);
-    const label = item?.label || id;
-    const count = (dataRef.current.queues[id] || []).length;
-    if (count > 0) {
-      setManageError(`Não é possível remover "${label}" com sócios na fila (${count}). Esvazie a fila primeiro.`);
-      return;
+    try {
+      await db.addModalidade(id, label);
+      await db.addLog({ modalidadeId: id, text: `Modalidade "${label}" foi criada`, reason: "Nova modalidade adicionada pela administração", by: adminName });
+      setNewModalidadeLabel("");
+      setManageError("");
+      await reloadModalidades(id);
+    } catch (e) {
+      console.error(e);
+      setManageError("Erro ao criar a modalidade. Tente novamente.");
     }
-    const nextModalidades = allModalidades.map((m) => (m.id === id ? { ...m, archived: true } : m));
-    let next = { ...dataRef.current, modalidades: nextModalidades };
-    next = pushLog(
-      next,
-      `Modalidade "${label}" foi arquivada (some das abas, mas continua filtrável no histórico)`,
-      "Modalidade arquivada pela administração",
-      id
-    );
-    persist(next);
-    if (modality === id) {
-      setModality(nextModalidades.find((m) => !m.archived)?.id || "");
-    }
-    setConfirmRemoveModalidade(null);
-    setManageError("");
   }
 
-  function restoreModalidade(id) {
-    const item = allModalidades.find((m) => m.id === id);
+  async function removeModalidade(id) {
+    const item = modalidades.find((m) => m.id === id);
     const label = item?.label || id;
-    const nextModalidades = allModalidades.map((m) => (m.id === id ? { ...m, archived: false } : m));
-    let next = { ...dataRef.current, modalidades: nextModalidades };
-    next = pushLog(next, `Modalidade "${label}" foi restaurada`, "Modalidade restaurada pela administração", id);
-    persist(next);
-    setManageError("");
+    try {
+      const count = modalidadeQueueCounts[id] || 0;
+      if (count > 0) {
+        setManageError(`Não é possível remover "${label}" com sócios na fila (${count}). Esvazie a fila primeiro.`);
+        return;
+      }
+      await db.setModalidadeArchived(id, true);
+      await db.addLog({
+        modalidadeId: id,
+        text: `Modalidade "${label}" foi arquivada (some das abas, mas continua filtrável no histórico)`,
+        reason: "Modalidade arquivada pela administração",
+        by: adminName,
+      });
+      const mods = await reloadModalidades(modality === id ? null : modality);
+      if (modality === id) setModality(mods.find((m) => !m.archived)?.id || "");
+      setConfirmRemoveModalidade(null);
+      setManageError("");
+    } catch (e) {
+      console.error(e);
+      setManageError("Erro ao arquivar. Tente novamente.");
+    }
   }
 
-  function clearQueue() {
+  async function restoreModalidade(id) {
+    const item = modalidades.find((m) => m.id === id);
+    const label = item?.label || id;
+    try {
+      await db.setModalidadeArchived(id, false);
+      await db.addLog({ modalidadeId: id, text: `Modalidade "${label}" foi restaurada`, reason: "Modalidade restaurada pela administração", by: adminName });
+      await reloadModalidades();
+      setManageError("");
+    } catch (e) {
+      console.error(e);
+      setManageError("Erro ao restaurar. Tente novamente.");
+    }
+  }
+
+  async function clearQueueAction() {
     if (!clearReason.trim()) {
       setClearError("Informe o motivo do esvaziamento da fila.");
       return;
     }
     const targetId = confirmClearQueue;
-    const removed = dataRef.current.queues[targetId] || [];
-    if (removed.length === 0) {
-      setConfirmClearQueue(null);
-      return;
-    }
-    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [targetId]: [] } };
-    next = {
-      ...next,
-      logs: [
-        {
-          id: "l" + Date.now() + Math.random().toString(16).slice(2),
-          ts: Date.now(),
-          modality: targetId,
+    try {
+      const removed = await db.clearQueue(targetId);
+      if (removed.length > 0) {
+        await db.addLog({
+          modalidadeId: targetId,
           text: `${removed.length} ${removed.length === 1 ? "sócio foi removido" : "sócios foram removidos"} da fila em massa`,
           reason: clearReason.trim(),
-          by: adminName || "Secretaria",
-          removedMembers: removed.map((p) => ({ full: p.full, matricula: p.matricula })),
-        },
-        ...next.logs,
-      ],
-    };
-    persist(next);
-    setConfirmClearQueue(null);
-    setClearReason("");
-    setClearError("");
-  }
-
-  function openReasonModal(type, index) {
-    setPendingAction({ type, index });
-    setReasonInput("");
-    setReasonError("");
-  }
-
-  function confirmPendingAction() {
-    if (!reasonInput.trim()) {
-      setReasonError("Informe o motivo da alteração.");
-      return;
+          by: adminName,
+          removedMembers: removed.map((p) => ({ full: p.full_name, matricula: p.matricula })),
+        });
+      }
+      setConfirmClearQueue(null);
+      setClearReason("");
+      setClearError("");
+      setModalidadeQueueCounts((prev) => ({ ...prev, [targetId]: 0 }));
+      if (targetId === modality) await refreshQueue();
+    } catch (e) {
+      console.error(e);
+      setClearError("Erro ao esvaziar. Tente novamente.");
     }
-    const { type, index } = pendingAction;
-    const arr = [...(dataRef.current.queues[modality] || [])];
-    const person = arr[index];
-
-    if (type === "up" || type === "down") {
-      const target = type === "up" ? index - 1 : index + 1;
-      if (target < 0 || target >= arr.length) return;
-      [arr[index], arr[target]] = [arr[target], arr[index]];
-      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-      next = pushLog(
-        next,
-        `${person.full} saiu da posição ${index + 1} para a posição ${target + 1}`,
-        reasonInput.trim()
-      );
-      persist(next);
-    } else if (type === "remove") {
-      arr.splice(index, 1);
-      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-      next = pushLog(next, `${person.full} foi removido da fila (posição ${index + 1})`, reasonInput.trim());
-      persist(next);
-    }
-
-    setPendingAction(null);
-    setReasonInput("");
   }
 
-  function callMember(index) {
-    const arr = [...(dataRef.current.queues[modality] || [])];
-    const person = arr[index];
-    arr[index] = { ...person, status: "chamado", calledAt: Date.now() };
-    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-    const filterParts = [];
-    if (filterLevel) filterParts.push(NIVEIS.find((n) => n.id === filterLevel)?.label);
-    if (filterHorarios.length > 0) filterParts.push(filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "));
-    if (filterFaixaEtaria) filterParts.push(FAIXAS_ETARIAS.find((f) => f.id === filterFaixaEtaria)?.label);
-    const filterNote = filterParts.length > 0 ? ` (chamado dentro do filtro: ${filterParts.join(" · ")})` : "";
-    next = pushLog(next, `${person.full} foi chamado para vaga disponível${filterNote}`, "Chamada de vaga disponível — aguardando resposta");
-    persist(next);
-  }
+  // ---------------------------------------------------------------------
+  // Sócios — adicionar, editar, mover, chamar, responder, remover
+  // ---------------------------------------------------------------------
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addMemberError, setAddMemberError] = useState("");
+  const [newMember, setNewMember] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
 
-  function openResponseModal(index) {
-    setPendingResponse({ index });
-    setResponseChoice(null);
-    setResponseReason("");
-    setResponseError("");
-  }
-
-  function confirmResponse() {
-    if (!responseChoice) {
-      setResponseError("Selecione o que aconteceu.");
-      return;
-    }
-    if (!responseReason.trim()) {
-      setResponseError("Informe uma observação sobre a resposta.");
-      return;
-    }
-    const { index } = pendingResponse;
-    const arr = [...(dataRef.current.queues[modality] || [])];
-    const person = arr[index];
-
-    if (responseChoice === "aceitou") {
-      arr.splice(index, 1);
-      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-      next = pushLog(next, `${person.full} aceitou a vaga e foi matriculado`, responseReason.trim());
-      persist(next);
-    } else if (responseChoice === "recusou_fica") {
-      const target = Math.min(index + 1, arr.length - 1);
-      const { status, calledAt, ...clean } = person;
-      arr.splice(index, 1);
-      arr.splice(target, 0, clean);
-      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-      next = pushLog(
-        next,
-        `${person.full} recusou a vaga e permanece na fila (saiu da posição ${index + 1} para a posição ${target + 1})`,
-        responseReason.trim()
-      );
-      persist(next);
-    } else if (responseChoice === "recusou_sai") {
-      arr.splice(index, 1);
-      let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-      next = pushLog(next, `${person.full} recusou a vaga e foi removido da fila`, responseReason.trim());
-      persist(next);
-    }
-
-    setPendingResponse(null);
-    setResponseChoice(null);
-    setResponseReason("");
-  }
-
-  function addMember() {
+  async function addMember() {
     const missing = [];
     if (!newMember.full.trim()) missing.push("nome completo");
     if (!newMember.matricula.trim()) missing.push("matrícula");
@@ -545,43 +601,45 @@ export default function FilaClube() {
       setAddMemberError(`Preencha: ${missing.join(", ")}.`);
       return;
     }
-    const arr = [
-      ...(dataRef.current.queues[modality] || []),
-      {
-        id: "m" + Date.now(),
-        full: newMember.full.trim(),
-        matricula: newMember.matricula.trim(),
-        phone: newMember.phone.trim(),
-        level: newMember.level || "",
-        availability: newMember.availability || [],
-        faixaEtaria: newMember.faixaEtaria || "",
-        joinedAt: new Date().toISOString().slice(0, 10),
-      },
-    ];
-    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-    next = pushLog(next, `${newMember.full.trim()} entrou na fila na posição ${arr.length}`, "Nova inscrição na fila");
-    persist(next);
-    setNewMember({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
-    setAddMemberError("");
-    setShowAddForm(false);
+    try {
+      const position = await db.addQueueEntry(modality, newMember);
+      await db.addLog({
+        modalidadeId: modality,
+        text: `${newMember.full.trim()} entrou na fila na posição ${position}`,
+        reason: "Nova inscrição na fila",
+        by: adminName,
+      });
+      setNewMember({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
+      setAddMemberError("");
+      setShowAddForm(false);
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+      setAddMemberError("Erro ao salvar. Tente novamente.");
+    }
   }
 
-  function openEditModal(index) {
-    const p = queue[index];
-    setEditingIndex(index);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [editDraft, setEditDraft] = useState({ full: "", matricula: "", phone: "", level: "", availability: [], faixaEtaria: "" });
+  const [editReason, setEditReason] = useState("");
+  const [editError, setEditError] = useState("");
+
+  function openEditModal(entry) {
+    setEditingEntry(entry);
     setEditDraft({
-      full: p.full,
-      matricula: p.matricula,
-      phone: p.phone || "",
-      level: p.level || "",
-      availability: p.availability || [],
-      faixaEtaria: p.faixaEtaria || "",
+      full: entry.full_name,
+      matricula: entry.matricula,
+      phone: entry.phone || "",
+      level: entry.level || "",
+      availability: entry.availability || [],
+      faixaEtaria: entry.faixa_etaria || "",
     });
     setEditReason("");
     setEditError("");
   }
 
-  function saveEditMember() {
+  async function saveEditMember() {
     const missing = [];
     if (!editDraft.full.trim()) missing.push("nome completo");
     if (!editDraft.matricula.trim()) missing.push("matrícula");
@@ -596,20 +654,18 @@ export default function FilaClube() {
       return;
     }
 
-    const arr = [...(dataRef.current.queues[modality] || [])];
-    const old = arr[editingIndex];
+    const old = editingEntry;
     const updated = {
-      ...old,
-      full: editDraft.full.trim(),
+      full_name: editDraft.full.trim(),
       matricula: editDraft.matricula.trim(),
-      phone: formatPhone(editDraft.phone || ""),
-      level: editDraft.level || "",
+      phone: formatPhone(editDraft.phone || "") || null,
+      level: editDraft.level || null,
       availability: editDraft.availability || [],
-      faixaEtaria: editDraft.faixaEtaria || "",
+      faixa_etaria: editDraft.faixaEtaria || null,
     };
 
     const changes = [];
-    if (old.full !== updated.full) changes.push(`nome alterado de "${old.full}" para "${updated.full}"`);
+    if (old.full_name !== updated.full_name) changes.push(`nome alterado de "${old.full_name}" para "${updated.full_name}"`);
     if (old.matricula !== updated.matricula) changes.push(`matrícula alterada de "${old.matricula}" para "${updated.matricula}"`);
     if ((old.phone || "") !== (updated.phone || "")) {
       changes.push(`telefone alterado de "${old.phone || "não informado"}" para "${updated.phone || "não informado"}"`);
@@ -619,9 +675,9 @@ export default function FilaClube() {
       const newLabel = NIVEIS.find((n) => n.id === updated.level)?.label || "não informado";
       changes.push(`nível alterado de "${oldLabel}" para "${newLabel}"`);
     }
-    if ((old.faixaEtaria || "") !== (updated.faixaEtaria || "")) {
-      const oldLabel = FAIXAS_ETARIAS.find((f) => f.id === old.faixaEtaria)?.label || "não informado";
-      const newLabel = FAIXAS_ETARIAS.find((f) => f.id === updated.faixaEtaria)?.label || "não informado";
+    if ((old.faixa_etaria || "") !== (updated.faixa_etaria || "")) {
+      const oldLabel = FAIXAS_ETARIAS.find((f) => f.id === old.faixa_etaria)?.label || "não informado";
+      const newLabel = FAIXAS_ETARIAS.find((f) => f.id === updated.faixa_etaria)?.label || "não informado";
       changes.push(`faixa etária alterada de "${oldLabel}" para "${newLabel}"`);
     }
     const oldAvail = (old.availability || []).slice().sort().join(",");
@@ -637,154 +693,165 @@ export default function FilaClube() {
       return;
     }
 
-    arr[editingIndex] = updated;
-    let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-    next = pushLog(next, `Dados de ${updated.full} foram atualizados: ${changes.join("; ")}`, editReason.trim());
-    persist(next);
-    setEditingIndex(null);
-    setEditReason("");
-    setEditError("");
-  }
-
-  async function tryLogin() {
-    setPwError("");
-    if (!emailInput.trim() || !pwInput) {
-      setPwError("Informe e-mail e senha.");
-      return;
-    }
-    setAuthLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: emailInput.trim(),
-      password: pwInput,
-    });
-    setAuthLoading(false);
-    if (error) {
-      setPwError("E-mail ou senha incorretos.");
-      return;
-    }
-    setShowLoginModal(false);
-    setEmailInput("");
-    setPwInput("");
-  }
-
-  async function logout() {
-    await supabase.auth.signOut();
-  }
-
-  const allModalidades = data?.modalidades || DEFAULT_MODALIDADES;
-  const modalidades = allModalidades.filter((m) => !m.archived);
-  const queue = data?.queues?.[modality] || [];
-  const currentModLabel = modalidades.find((m) => m.id === modality)?.label;
-  const isAdmin = !!session;
-  const adminName = session?.user?.email || "";
-
-  const filteredQueue = useMemo(() => {
-    const q = queueSearch.trim().toLowerCase();
-    return queue.filter((p) => {
-      const nameForSearch = (p.full || p.maskedName || "").toLowerCase();
-      const matchesSearch = !q || nameForSearch.includes(q) || (p.matricula || "").includes(q);
-      const matchesLevel = !filterLevel || p.level === filterLevel;
-      const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
-      const matchesFaixaEtaria = !filterFaixaEtaria || p.faixaEtaria === filterFaixaEtaria;
-      return matchesSearch && matchesLevel && matchesHorario && matchesFaixaEtaria;
-    });
-  }, [queue, queueSearch, filterLevel, filterHorarios, filterFaixaEtaria]);
-
-  const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0 || !!filterFaixaEtaria;
-
-  // Lista usada para decidir a ordem de chamada — considera só o filtro de
-  // vaga (nível/horário/faixa etária), nunca a busca por texto (que é só
-  // pra achar alguém na tela, não deve interferir em quem pode ser chamado).
-  const vagaEligibleQueue = useMemo(() => {
-    if (!isFilteringForVaga) return queue;
-    return queue.filter((p) => {
-      const matchesLevel = !filterLevel || p.level === filterLevel;
-      const matchesHorario = filterHorarios.length === 0 || (p.availability || []).some((a) => filterHorarios.includes(a));
-      const matchesFaixaEtaria = !filterFaixaEtaria || p.faixaEtaria === filterFaixaEtaria;
-      return matchesLevel && matchesHorario && matchesFaixaEtaria;
-    });
-  }, [queue, filterLevel, filterHorarios, filterFaixaEtaria, isFilteringForVaga]);
-
-  const visibleQueue = filteredQueue.slice(0, visibleCount);
-
-  // Estimativa de tempo de espera — só entra em cálculo se houver histórico
-  // suficiente (mínimo 3 vagas preenchidas nessa modalidade). Baseada no
-  // ritmo real de vagas dos últimos meses, nunca numa data específica.
-  const waitEstimate = useMemo(() => {
-    const events = (data?.logs || [])
-      .filter((l) => l.modality === modality && /aceitou a vaga e foi matriculado/.test(l.text))
-      .map((l) => l.ts)
-      .sort((a, b) => a - b);
-    if (events.length < 3) return null;
-    const spanMs = events[events.length - 1] - events[0];
-    const spanMonths = Math.max(spanMs / (1000 * 60 * 60 * 24 * 30), 1);
-    const ratePerMonth = events.length / spanMonths;
-    if (!ratePerMonth || !isFinite(ratePerMonth)) return null;
-    return { count: events.length, spanMonths, ratePerMonth };
-  }, [data, modality]);
-
-  function estimateRangeForPosition(pos) {
-    if (!waitEstimate) return null;
-    const months = pos / waitEstimate.ratePerMonth;
-    const low = Math.max(1, Math.round(months * 0.7));
-    const high = Math.max(low + 1, Math.round(months * 1.4));
-    return { low, high };
-  }
-
-  const ALERT_THRESHOLD_HOURS = 48;
-
-  const dashboardStats = useMemo(() => {
-    if (!data) return null;
-    const now = Date.now();
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-    const startOfMonthTs = startOfMonth.getTime();
-
-    let totalWaiting = 0;
-    let aguardandoRespostaAgora = 0;
-    const perModalidade = [];
-    const alerts = [];
-
-    modalidades.forEach((m) => {
-      const q = data.queues?.[m.id] || [];
-      totalWaiting += q.length;
-      const aguardando = q.filter((p) => p.status === "chamado").length;
-      aguardandoRespostaAgora += aguardando;
-      perModalidade.push({ id: m.id, label: m.label, queueLength: q.length, aguardando });
-
-      q.forEach((p) => {
-        if (p.status === "chamado" && p.calledAt) {
-          const hoursWaiting = (now - p.calledAt) / (1000 * 60 * 60);
-          if (hoursWaiting >= ALERT_THRESHOLD_HOURS) {
-            alerts.push({ modalityLabel: m.label, modalityId: m.id, name: p.full, hoursWaiting });
-          }
-        }
+    try {
+      await db.updateQueueEntry(old.id, updated);
+      await db.addLog({
+        modalidadeId: modality,
+        text: `Dados de ${updated.full_name} foram atualizados: ${changes.join("; ")}`,
+        reason: editReason.trim(),
+        by: adminName,
       });
-    });
+      setEditingEntry(null);
+      setEditReason("");
+      setEditError("");
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+      setEditError("Erro ao salvar. Tente novamente.");
+    }
+  }
 
-    const vagasPreenchidasMes = (data.logs || []).filter(
-      (l) => /aceitou a vaga e foi matriculado/.test(l.text) && l.ts >= startOfMonthTs
-    ).length;
+  const [pendingAction, setPendingAction] = useState(null); // { type: 'up'|'down', entry }
+  const [reasonInput, setReasonInput] = useState("");
+  const [reasonError, setReasonError] = useState("");
 
-    alerts.sort((a, b) => b.hoursWaiting - a.hoursWaiting);
+  function openReasonModal(type, entry) {
+    setPendingAction({ type, entry });
+    setReasonInput("");
+    setReasonError("");
+  }
 
-    return { totalWaiting, aguardandoRespostaAgora, vagasPreenchidasMes, perModalidade, alerts };
-  }, [data, modalidades]);
+  async function confirmPendingAction() {
+    if (!reasonInput.trim()) {
+      setReasonError("Informe o motivo da alteração.");
+      return;
+    }
+    const { type, entry } = pendingAction;
+    try {
+      await db.moveQueueEntry(entry.id, type);
+      const { data: freshRow } = await supabase.from("queue_entries").select("position").eq("id", entry.id).maybeSingle();
+      if (freshRow && freshRow.position !== entry.position) {
+        await db.addLog({
+          modalidadeId: modality,
+          text: `${entry.full_name} saiu da posição ${entry.position} para a posição ${freshRow.position}`,
+          reason: reasonInput.trim(),
+          by: adminName,
+        });
+      }
+      setPendingAction(null);
+      setReasonInput("");
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+      setReasonError("Erro ao salvar. Tente novamente.");
+    }
+  }
 
-  const allLogs = data?.logs || [];
-  const filteredLogs = useMemo(() => {
-    let list = allLogs;
-    if (logModalityFilter !== "todas") list = list.filter((l) => l.modality === logModalityFilter);
-    const q = logSearch.trim().toLowerCase();
-    if (q) list = list.filter((l) => l.text.toLowerCase().includes(q) || (l.reason || "").toLowerCase().includes(q) || l.by.toLowerCase().includes(q));
-    return list;
-  }, [allLogs, logModalityFilter, logSearch]);
+  async function handleCallMember(entry) {
+    try {
+      await db.callMember(entry.id);
+      const filterParts = [];
+      if (filterLevel) filterParts.push(NIVEIS.find((n) => n.id === filterLevel)?.label);
+      if (filterHorarios.length > 0) filterParts.push(filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "));
+      if (filterFaixaEtaria) filterParts.push(FAIXAS_ETARIAS.find((f) => f.id === filterFaixaEtaria)?.label);
+      const filterNote = filterParts.length > 0 ? ` (chamado dentro do filtro: ${filterParts.join(" · ")})` : "";
+      await db.addLog({
+        modalidadeId: modality,
+        text: `${entry.full_name} foi chamado para vaga disponível${filterNote}`,
+        reason: "Chamada de vaga disponível — aguardando resposta",
+        by: adminName,
+      });
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
-  const modalityLogsPreview = allLogs.filter((l) => l.modality === modality).slice(0, 5);
-  const visibleLogs = filteredLogs.slice(0, logVisibleCount);
+  const [pendingResponse, setPendingResponse] = useState(null); // entry
+  const [responseChoice, setResponseChoice] = useState(null);
+  const [responseReason, setResponseReason] = useState("");
+  const [responseError, setResponseError] = useState("");
 
-  if (loading || !data) {
+  function openResponseModal(entry) {
+    setPendingResponse(entry);
+    setResponseChoice(null);
+    setResponseReason("");
+    setResponseError("");
+  }
+
+  async function confirmResponse() {
+    if (!responseChoice) {
+      setResponseError("Selecione o que aconteceu.");
+      return;
+    }
+    if (!responseReason.trim()) {
+      setResponseError("Informe uma observação sobre a resposta.");
+      return;
+    }
+    const entry = pendingResponse;
+    try {
+      if (responseChoice === "aceitou") {
+        await db.deleteQueueEntry(entry.id);
+        await db.addLog({ modalidadeId: modality, text: `${entry.full_name} aceitou a vaga e foi matriculado`, reason: responseReason.trim(), by: adminName });
+      } else if (responseChoice === "recusou_fica") {
+        await db.resolveResponseStay(entry.id);
+        const { data: freshRow } = await supabase.from("queue_entries").select("position").eq("id", entry.id).maybeSingle();
+        const newPos = freshRow?.position ?? entry.position + 1;
+        await db.addLog({
+          modalidadeId: modality,
+          text: `${entry.full_name} recusou a vaga e permanece na fila (saiu da posição ${entry.position} para a posição ${newPos})`,
+          reason: responseReason.trim(),
+          by: adminName,
+        });
+      } else if (responseChoice === "recusou_sai") {
+        await db.deleteQueueEntry(entry.id);
+        await db.addLog({ modalidadeId: modality, text: `${entry.full_name} recusou a vaga e foi removido da fila`, reason: responseReason.trim(), by: adminName });
+      }
+      setPendingResponse(null);
+      setResponseChoice(null);
+      setResponseReason("");
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+      setResponseError("Erro ao salvar. Tente novamente.");
+    }
+  }
+
+  const [confirmRemove, setConfirmRemove] = useState(null); // entry
+
+  async function confirmRemoveEntry() {
+    if (!reasonInput.trim()) {
+      setReasonError("Informe o motivo da remoção.");
+      return;
+    }
+    const entry = confirmRemove;
+    try {
+      await db.deleteQueueEntry(entry.id);
+      await db.addLog({
+        modalidadeId: modality,
+        text: `${entry.full_name} foi removido da fila (posição ${entry.position})`,
+        reason: reasonInput.trim(),
+        by: adminName,
+      });
+      setConfirmRemove(null);
+      setReasonInput("");
+      setReasonError("");
+      await refreshQueue();
+      await refreshRecentLogs();
+    } catch (e) {
+      console.error(e);
+      setReasonError("Erro ao salvar. Tente novamente.");
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------
+  if (loading) {
     return (
       <div style={{ padding: "3rem 1rem", textAlign: "center", color: "#5B6B7A", fontFamily: "system-ui, sans-serif" }}>
         Carregando fila...
@@ -867,9 +934,9 @@ export default function FilaClube() {
           </button>
 
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
-            <select className="fc-select" value={logModalityFilter} onChange={(e) => { setLogModalityFilter(e.target.value); setLogVisibleCount(LOG_PAGE_SIZE); }}>
+            <select className="fc-select" value={logModalityFilter} onChange={(e) => setLogModalityFilter(e.target.value)}>
               <option value="todas">Todas as modalidades</option>
-              {allModalidades.map((m) => (
+              {modalidades.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}{m.archived ? " (arquivada)" : ""}</option>
               ))}
             </select>
@@ -879,55 +946,55 @@ export default function FilaClube() {
                 className="fc-input"
                 style={{ paddingLeft: "30px" }}
                 placeholder="Buscar por nome, motivo ou responsável"
-                value={logSearch}
-                onChange={(e) => { setLogSearch(e.target.value); setLogVisibleCount(LOG_PAGE_SIZE); }}
+                value={logSearchInput}
+                onChange={(e) => setLogSearchInput(e.target.value)}
               />
             </div>
           </div>
 
           <p style={{ fontSize: "12px", color: "#5B6B7A", margin: "0 0 8px", fontFamily: "system-ui, sans-serif" }}>
-            {filteredLogs.length} {filteredLogs.length === 1 ? "registro encontrado" : "registros encontrados"}
+            {logLoading ? "Carregando..." : `${logTotalCount} ${logTotalCount === 1 ? "registro encontrado" : "registros encontrados"}`}
           </p>
 
           <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
-            {visibleLogs.length === 0 && (
+            {!logLoading && logRows.length === 0 && (
               <p style={{ padding: "20px 0", fontSize: "13px", color: "#8FA1B0", fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
                 Nenhum registro encontrado para esse filtro.
               </p>
             )}
-            {visibleLogs.map((l, i) => (
-              <div key={l.id} style={{ padding: "12px 0", borderBottom: i < visibleLogs.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
+            {logRows.map((l, i) => (
+              <div key={l.id} style={{ padding: "12px 0", borderBottom: i < logRows.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
                   <span style={{ color: "#10314F", fontWeight: "500" }}>{l.text}</span>
-                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{allModalidades.find((m) => m.id === l.modality)?.label}</span>
+                  <span style={{ color: "#8FA1B0", fontSize: "12px" }}>{modalidades.find((m) => m.id === l.modalidade_id)?.label}</span>
                 </div>
                 {l.reason && <p style={{ margin: "4px 0 0", color: "#5B6B7A" }}>Motivo: {l.reason}</p>}
-                {l.removedMembers && l.removedMembers.length > 0 && (
+                {l.removed_members && l.removed_members.length > 0 && (
                   <div style={{ margin: "4px 0 0" }}>
                     <button
                       className="fc-btn"
                       style={{ padding: "2px 8px", fontSize: "11px" }}
                       onClick={() => setExpandedLogDetails((s) => ({ ...s, [l.id]: !s[l.id] }))}
                     >
-                      {expandedLogDetails[l.id] ? "Ocultar lista" : `Ver lista (${l.removedMembers.length})`}
+                      {expandedLogDetails[l.id] ? "Ocultar lista" : `Ver lista (${l.removed_members.length})`}
                     </button>
                     {expandedLogDetails[l.id] && (
                       <ul style={{ margin: "6px 0 0", paddingLeft: "18px", color: "#5B6B7A" }}>
-                        {l.removedMembers.map((m, idx) => (
+                        {l.removed_members.map((m, idx) => (
                           <li key={idx}>{m.full} — matrícula {m.matricula}</li>
                         ))}
                       </ul>
                     )}
                   </div>
                 )}
-                <p style={{ margin: "4px 0 0", color: "#8FA1B0", fontSize: "12px" }}>{formatLogTime(l.ts)} · {l.by}</p>
+                <p style={{ margin: "4px 0 0", color: "#8FA1B0", fontSize: "12px" }}>{formatLogTime(new Date(l.ts).getTime())} · {l.by}</p>
               </div>
             ))}
           </div>
 
-          {visibleLogs.length < filteredLogs.length && (
-            <button className="fc-btn" style={{ marginTop: "12px" }} onClick={() => setLogVisibleCount((c) => c + LOG_PAGE_SIZE)}>
-              Carregar mais {Math.min(LOG_PAGE_SIZE, filteredLogs.length - visibleLogs.length)}
+          {logRows.length < logTotalCount && (
+            <button className="fc-btn" style={{ marginTop: "12px" }} onClick={loadMoreLogs} disabled={logLoadingMore}>
+              {logLoadingMore ? "Carregando..." : `Carregar mais ${Math.min(LOG_PAGE_SIZE, logTotalCount - logRows.length)}`}
             </button>
           )}
         </div>
@@ -940,8 +1007,8 @@ export default function FilaClube() {
           <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades cadastradas</p>
             <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
-              {modalidades.map((m) => {
-                const count = (data.queues[m.id] || []).length;
+              {activeModalidades.map((m) => {
+                const count = modalidadeQueueCounts[m.id] ?? "…";
                 return (
                   <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F5F0E2", borderRadius: "6px" }}>
                     <span style={{ fontSize: "13px", color: "#10314F" }}>
@@ -973,11 +1040,11 @@ export default function FilaClube() {
               })}
             </div>
 
-            {allModalidades.some((m) => m.archived) && (
+            {modalidades.some((m) => m.archived) && (
               <>
                 <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: "500", color: "#10314F" }}>Modalidades arquivadas</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px" }}>
-                  {allModalidades.filter((m) => m.archived).map((m) => (
+                  {modalidades.filter((m) => m.archived).map((m) => (
                     <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F5F0E2", borderRadius: "6px", opacity: 0.75 }}>
                       <span style={{ fontSize: "13px", color: "#10314F" }}>{m.label}</span>
                       <button className="fc-btn" style={{ padding: "4px 8px", fontSize: "12px" }} onClick={() => restoreModalidade(m.id)}>
@@ -1015,125 +1082,82 @@ export default function FilaClube() {
             <ArrowLeft size={14} aria-hidden="true" /> Voltar para a fila
           </button>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
-            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
-              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Sócios esperando (clube todo)</p>
-              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#0F3D63", fontFamily: "Georgia, serif" }}>{dashboardStats?.totalWaiting ?? 0}</p>
-            </div>
-            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
-              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Vagas preenchidas este mês</p>
-              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#1F7A45", fontFamily: "Georgia, serif" }}>{dashboardStats?.vagasPreenchidasMes ?? 0}</p>
-            </div>
-            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
-              <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Aguardando resposta agora</p>
-              <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#8A6D1F", fontFamily: "Georgia, serif" }}>{dashboardStats?.aguardandoRespostaAgora ?? 0}</p>
-            </div>
-          </div>
-
-          {dashboardStats?.alerts?.length > 0 && (
-            <div style={{ marginBottom: "20px" }}>
-              <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#A32D2D", fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-                <AlertTriangle size={14} aria-hidden="true" /> Aguardando resposta há mais de {ALERT_THRESHOLD_HOURS}h, sem retorno registrado
-              </p>
-              <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: "12px", padding: "4px 14px" }}>
-                {dashboardStats.alerts.map((a, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "10px 0",
-                      borderBottom: i < dashboardStats.alerts.length - 1 ? "1px solid #F0D3D3" : "none",
-                      fontFamily: "system-ui, sans-serif",
-                      fontSize: "13px",
-                      flexWrap: "wrap",
-                      gap: "6px",
-                    }}
-                  >
-                    <span style={{ color: "#7A2323" }}>
-                      <strong>{a.name}</strong> · {a.modalityLabel}
-                    </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <span style={{ color: "#A32D2D" }}>{Math.round(a.hoursWaiting)}h esperando resposta</span>
-                      <button
-                        className="fc-btn"
-                        style={{ padding: "3px 8px", fontSize: "12px" }}
-                        onClick={() => { setModality(a.modalityId); setShowDashboard(false); }}
-                      >
-                        Ver na fila
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#10314F", fontFamily: "system-ui, sans-serif" }}>Por modalidade</p>
-            <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
-              {dashboardStats?.perModalidade.map((m, i) => (
-                <div
-                  key={m.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 0",
-                    borderBottom: i < dashboardStats.perModalidade.length - 1 ? "1px solid #F0EBDD" : "none",
-                    fontFamily: "system-ui, sans-serif",
-                    fontSize: "13px",
-                  }}
-                >
-                  <span style={{ color: "#10314F", fontWeight: "500" }}>{m.label}</span>
-                  <span style={{ color: "#5B6B7A" }}>
-                    {m.queueLength} na fila
-                    {m.aguardando > 0 && <span style={{ color: "#8A6D1F" }}> · {m.aguardando} aguardando resposta</span>}
-                  </span>
+          {dashboardLoading || !dashboardStats ? (
+            <p style={{ fontFamily: "system-ui, sans-serif", fontSize: "13px", color: "#5B6B7A" }}>Carregando painel...</p>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+                <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Sócios esperando (clube todo)</p>
+                  <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#0F3D63", fontFamily: "Georgia, serif" }}>{dashboardStats.totalWaiting}</p>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Vagas preenchidas este mês</p>
+                  <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#1F7A45", fontFamily: "Georgia, serif" }}>{dashboardStats.vagasPreenchidasMes}</p>
+                </div>
+                <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "16px", fontFamily: "system-ui, sans-serif" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: "12px", color: "#5B6B7A" }}>Aguardando resposta agora</p>
+                  <p style={{ margin: 0, fontSize: "28px", fontWeight: "700", color: "#8A6D1F", fontFamily: "Georgia, serif" }}>{dashboardStats.aguardandoRespostaAgora}</p>
+                </div>
+              </div>
+
+              {dashboardStats.alerts.length > 0 && (
+                <div style={{ marginBottom: "20px" }}>
+                  <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#A32D2D", fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <AlertTriangle size={14} aria-hidden="true" /> Aguardando resposta há mais de {ALERT_THRESHOLD_HOURS}h, sem retorno registrado
+                  </p>
+                  <div style={{ background: "#FBEAEA", border: "1px solid #E3B9B9", borderRadius: "12px", padding: "4px 14px" }}>
+                    {dashboardStats.alerts.map((a, i) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < dashboardStats.alerts.length - 1 ? "1px solid #F0D3D3" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px", flexWrap: "wrap", gap: "6px" }}>
+                        <span style={{ color: "#7A2323" }}>
+                          <strong>{a.name}</strong> · {a.modalityLabel}
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ color: "#A32D2D" }}>{Math.round(a.hoursWaiting)}h esperando resposta</span>
+                          <button className="fc-btn" style={{ padding: "3px 8px", fontSize: "12px" }} onClick={() => { setModality(a.modalityId); setShowDashboard(false); }}>
+                            Ver na fila
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <p style={{ margin: "0 0 8px", fontSize: "13px", fontWeight: "500", color: "#10314F", fontFamily: "system-ui, sans-serif" }}>Por modalidade</p>
+                <div style={{ background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", padding: "4px 16px" }}>
+                  {dashboardStats.perModalidade.map((m, i) => (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < dashboardStats.perModalidade.length - 1 ? "1px solid #F0EBDD" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
+                      <span style={{ color: "#10314F", fontWeight: "500" }}>{m.label}</span>
+                      <span style={{ color: "#5B6B7A" }}>
+                        {m.queueLength} na fila
+                        {m.aguardando > 0 && <span style={{ color: "#8A6D1F" }}> · {m.aguardando} aguardando resposta</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <>
           <div style={{ padding: "20px 24px 4px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-            {modalidades.map((m) => (
-              <button
-                key={m.id}
-                className={`fc-tab ${modality === m.id ? "fc-tab-active" : ""}`}
-                onClick={() => setModality(m.id)}
-              >
+            {activeModalidades.map((m) => (
+              <button key={m.id} className={`fc-tab ${modality === m.id ? "fc-tab-active" : ""}`} onClick={() => setModality(m.id)}>
                 {m.label}
               </button>
             ))}
             {isAdmin && (
               <div style={{ position: "relative", marginLeft: "auto" }}>
-                <button
-                  className="fc-btn"
-                  style={{ padding: "6px 10px", fontSize: "12px" }}
-                  onClick={() => setToolsMenuOpen((v) => !v)}
-                >
+                <button className="fc-btn" style={{ padding: "6px 10px", fontSize: "12px" }} onClick={() => setToolsMenuOpen((v) => !v)}>
                   <Settings size={13} aria-hidden="true" /> Ferramentas <ChevronDown size={12} aria-hidden="true" />
                 </button>
                 {toolsMenuOpen && (
                   <>
                     <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setToolsMenuOpen(false)} />
-                    <div
-                      style={{
-                        position: "absolute",
-                        right: 0,
-                        top: "calc(100% + 6px)",
-                        background: "#fff",
-                        border: "1px solid #EAE2CC",
-                        borderRadius: "10px",
-                        boxShadow: "0 12px 28px -10px rgba(15,61,99,0.35)",
-                        zIndex: 41,
-                        minWidth: "210px",
-                        overflow: "hidden",
-                      }}
-                    >
+                    <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "10px", boxShadow: "0 12px 28px -10px rgba(15,61,99,0.35)", zIndex: 41, minWidth: "210px", overflow: "hidden" }}>
                       <button className="fc-dropdown-item" onClick={() => { setShowDashboard(true); setToolsMenuOpen(false); }}>
                         <LayoutDashboard size={14} aria-hidden="true" /> Painel geral
                       </button>
@@ -1153,13 +1177,27 @@ export default function FilaClube() {
               {isAdmin ? "Modo administração — você pode reordenar, chamar e remover sócios" : "Modo consulta — visível a qualquer sócio"}
             </p>
             <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-              <Users size={14} aria-hidden="true" /> {queue.length} na fila de {currentModLabel}
+              <Users size={14} aria-hidden="true" /> {queueTotalCount} na fila de {currentModLabel}
             </p>
           </div>
 
-          {saveError && (
+          {queueError && (
             <div style={{ margin: "0 24px 12px", padding: "8px 12px", background: "#FBEAEA", color: "#A32D2D", borderRadius: "6px", fontSize: "12px", fontFamily: "system-ui, sans-serif" }}>
-              Não foi possível salvar a última alteração. Verifique a conexão e tente novamente.
+              Não foi possível carregar a fila. Verifique a conexão e tente novamente.
+            </div>
+          )}
+
+          {isAdmin && (
+            <div style={{ margin: "0 24px 12px", background: "#FBF3D9", border: "1px solid #E8D6A0", borderRadius: "12px", padding: "10px 14px", fontFamily: "system-ui, sans-serif" }}>
+              <p style={{ margin: 0, fontSize: "12px", color: "#8A6D1F", display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                <Clock size={13} aria-hidden="true" style={{ marginTop: "1px", flexShrink: 0 }} />
+                <span>
+                  <strong>Estimativa de tempo de espera — visível só para administração (em teste).</strong>{" "}
+                  {waitEstimate
+                    ? `Baseada em ${waitEstimate.count} vagas preenchidas nessa modalidade nos últimos ${Math.round(waitEstimate.spanMonths)} meses. Ainda não é exibida para os sócios até validarmos a precisão.`
+                    : "Ainda não há histórico suficiente nessa modalidade (mínimo de 3 vagas preenchidas) para calcular uma estimativa confiável."}
+                </span>
+              </p>
             </div>
           )}
 
@@ -1169,28 +1207,16 @@ export default function FilaClube() {
               className="fc-input"
               style={{ paddingLeft: "30px" }}
               placeholder={isAdmin ? "Buscar por nome ou matrícula" : "Buscar por nome"}
-              value={queueSearch}
-              onChange={(e) => { setQueueSearch(e.target.value); setVisibleCount(PAGE_SIZE); }}
+              value={queueSearchInput}
+              onChange={(e) => setQueueSearchInput(e.target.value)}
             />
           </div>
 
           {isAdmin && (
-            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
+            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "12px", overflow: "hidden" }}>
               <button
                 onClick={() => setShowVagaFilters((v) => !v)}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                  padding: "10px 14px",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "system-ui, sans-serif",
-                  textAlign: "left",
-                }}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "10px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "system-ui, sans-serif", textAlign: "left" }}
               >
                 <span style={{ fontSize: "12px", color: "#5B6B7A", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
                   <Filter size={12} aria-hidden="true" /> Filtrar para uma vaga específica
@@ -1212,7 +1238,7 @@ export default function FilaClube() {
                     <button
                       className="fc-btn"
                       style={{ padding: "4px 10px", fontSize: "12px", background: !filterLevel ? "#F5F0E2" : "#fff", borderColor: !filterLevel ? "#8FA1B0" : "#DAD2B8" }}
-                      onClick={() => { setFilterLevel(""); setVisibleCount(PAGE_SIZE); }}
+                      onClick={() => setFilterLevel("")}
                     >
                       Todos os níveis
                     </button>
@@ -1220,14 +1246,8 @@ export default function FilaClube() {
                       <button
                         key={n.id}
                         className="fc-btn"
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: "12px",
-                          background: filterLevel === n.id ? n.bg : "#fff",
-                          color: filterLevel === n.id ? n.fg : "#10314F",
-                          borderColor: filterLevel === n.id ? n.fg : "#DAD2B8",
-                        }}
-                        onClick={() => { setFilterLevel(filterLevel === n.id ? "" : n.id); setVisibleCount(PAGE_SIZE); }}
+                        style={{ padding: "4px 10px", fontSize: "12px", background: filterLevel === n.id ? n.bg : "#fff", color: filterLevel === n.id ? n.fg : "#10314F", borderColor: filterLevel === n.id ? n.fg : "#DAD2B8" }}
+                        onClick={() => setFilterLevel(filterLevel === n.id ? "" : n.id)}
                       >
                         {n.label}
                       </button>
@@ -1241,10 +1261,7 @@ export default function FilaClube() {
                           key={h.id}
                           className="fc-btn"
                           style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#DAD2B8" }}
-                          onClick={() => {
-                            setFilterHorarios((prev) => (active ? prev.filter((x) => x !== h.id) : [...prev, h.id]));
-                            setVisibleCount(PAGE_SIZE);
-                          }}
+                          onClick={() => setFilterHorarios((prev) => (active ? prev.filter((x) => x !== h.id) : [...prev, h.id]))}
                         >
                           <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
                           {h.label}
@@ -1256,7 +1273,7 @@ export default function FilaClube() {
                     <button
                       className="fc-btn"
                       style={{ padding: "4px 10px", fontSize: "12px", background: !filterFaixaEtaria ? "#F5F0E2" : "#fff", borderColor: !filterFaixaEtaria ? "#8FA1B0" : "#DAD2B8" }}
-                      onClick={() => { setFilterFaixaEtaria(""); setVisibleCount(PAGE_SIZE); }}
+                      onClick={() => setFilterFaixaEtaria("")}
                     >
                       Todas as faixas etárias
                     </button>
@@ -1264,14 +1281,8 @@ export default function FilaClube() {
                       <button
                         key={f.id}
                         className="fc-btn"
-                        style={{
-                          padding: "4px 10px",
-                          fontSize: "12px",
-                          background: filterFaixaEtaria === f.id ? f.bg : "#fff",
-                          color: filterFaixaEtaria === f.id ? f.fg : "#10314F",
-                          borderColor: filterFaixaEtaria === f.id ? f.fg : "#DAD2B8",
-                        }}
-                        onClick={() => { setFilterFaixaEtaria(filterFaixaEtaria === f.id ? "" : f.id); setVisibleCount(PAGE_SIZE); }}
+                        style={{ padding: "4px 10px", fontSize: "12px", background: filterFaixaEtaria === f.id ? f.bg : "#fff", color: filterFaixaEtaria === f.id ? f.fg : "#10314F", borderColor: filterFaixaEtaria === f.id ? f.fg : "#DAD2B8" }}
+                        onClick={() => setFilterFaixaEtaria(filterFaixaEtaria === f.id ? "" : f.id)}
                       >
                         {f.label}
                       </button>
@@ -1287,39 +1298,28 @@ export default function FilaClube() {
             </div>
           )}
 
-          {isAdmin && (
-            <div style={{ margin: "0 24px 12px", background: "#FBF3D9", border: "1px solid #E8D6A0", borderRadius: "12px", padding: "10px 14px", fontFamily: "system-ui, sans-serif" }}>
-              <p style={{ margin: 0, fontSize: "12px", color: "#8A6D1F", display: "flex", alignItems: "flex-start", gap: "6px" }}>
-                <Clock size={13} aria-hidden="true" style={{ marginTop: "1px", flexShrink: 0 }} />
-                <span>
-                  <strong>Estimativa de tempo de espera — visível só para administração (em teste).</strong>{" "}
-                  {waitEstimate
-                    ? `Baseada em ${waitEstimate.count} vagas preenchidas nessa modalidade nos últimos ${Math.round(waitEstimate.spanMonths)} meses. Ainda não é exibida para os sócios até validarmos a precisão.`
-                    : "Ainda não há histórico suficiente nessa modalidade (mínimo de 3 vagas preenchidas) para calcular uma estimativa confiável."}
-                </span>
-              </p>
-            </div>
-          )}
-
           <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
-            {filteredQueue.length === 0 && (
+            {queueLoading && (
+              <p style={{ padding: "24px", textAlign: "center", color: "#8FA1B0", fontSize: "14px", fontFamily: "system-ui, sans-serif" }}>Carregando...</p>
+            )}
+            {!queueLoading && queueRows.length === 0 && (
               <p style={{ padding: "24px", textAlign: "center", color: "#8FA1B0", fontSize: "14px", fontFamily: "system-ui, sans-serif" }}>
-                {queueSearch ? "Nenhum resultado para essa busca." : `Nenhum sócio na fila de ${currentModLabel} no momento.`}
+                {queueSearch || isFilteringForVaga ? "Nenhum resultado para essa busca/filtro." : `Nenhum sócio na fila de ${currentModLabel} no momento.`}
               </p>
             )}
-            {visibleQueue.map((p) => {
-              const i = queue.findIndex((x) => x.id === p.id);
-              const posInEligible = vagaEligibleQueue.findIndex((x) => x.id === p.id);
-              const canCall = posInEligible === -1 ? false : vagaEligibleQueue.slice(0, posInEligible).every((x) => x.status === "chamado");
+            {!queueLoading && queueRows.map((entry) => {
+              const displayName = isAdmin ? entry.full_name : entry.masked_name;
+              const canCall = isAdmin && nextCallableId === entry.id;
+              const isFirst = entry.position === 1;
               return (
-                <div key={p.id} className="fc-queue-row">
+                <div key={entry.id} className="fc-queue-row">
                   <div
                     style={{
                       width: "32px",
                       height: "32px",
                       borderRadius: "50%",
-                      background: i === 0 ? "#0F3D63" : "#E3EEF7",
-                      color: i === 0 ? "#fff" : "#0F3D63",
+                      background: isFirst ? "#0F3D63" : "#E3EEF7",
+                      color: isFirst ? "#fff" : "#0F3D63",
                       fontSize: "13px",
                       fontWeight: "700",
                       fontFamily: "Georgia, serif",
@@ -1328,48 +1328,30 @@ export default function FilaClube() {
                       justifyContent: "center",
                       flexShrink: 0,
                       border: "1.5px solid #B08A3C",
-                      boxShadow: i === 0 ? "0 0 0 3px rgba(176,138,60,0.2)" : "none",
+                      boxShadow: isFirst ? "0 0 0 3px rgba(176,138,60,0.2)" : "none",
                     }}
                   >
-                    {i + 1}
+                    {entry.position}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      {isAdmin ? p.full : (p.maskedName || maskName(p.full || ""))}
-                      {p.status === "chamado" && (
+                      {displayName}
+                      {entry.status === "chamado" && (
                         <span style={{ fontSize: "11px", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                          <Clock size={11} aria-hidden="true" /> Aguardando resposta{isAdmin ? ` · ${formatLogTime(p.calledAt)}` : ""}
+                          <Clock size={11} aria-hidden="true" /> Aguardando resposta{isAdmin && entry.called_at ? ` · ${formatLogTime(new Date(entry.called_at).getTime())}` : ""}
                         </span>
                       )}
-                      {p.level && NIVEIS.find((n) => n.id === p.level) && (
-                        <span
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: "500",
-                            color: NIVEIS.find((n) => n.id === p.level).fg,
-                            background: NIVEIS.find((n) => n.id === p.level).bg,
-                            padding: "2px 8px",
-                            borderRadius: "999px",
-                          }}
-                        >
-                          {NIVEIS.find((n) => n.id === p.level).label}
+                      {entry.level && NIVEIS.find((n) => n.id === entry.level) && (
+                        <span style={{ fontSize: "11px", fontWeight: "500", color: NIVEIS.find((n) => n.id === entry.level).fg, background: NIVEIS.find((n) => n.id === entry.level).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                          {NIVEIS.find((n) => n.id === entry.level).label}
                         </span>
                       )}
-                      {p.faixaEtaria && FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria) && (
-                        <span
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: "500",
-                            color: FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).fg,
-                            background: FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).bg,
-                            padding: "2px 8px",
-                            borderRadius: "999px",
-                          }}
-                        >
-                          {FAIXAS_ETARIAS.find((f) => f.id === p.faixaEtaria).label}
+                      {entry.faixa_etaria && FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria) && (
+                        <span style={{ fontSize: "11px", fontWeight: "500", color: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).fg, background: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                          {FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).label}
                         </span>
                       )}
-                      {(p.availability || []).map((a) => {
+                      {(entry.availability || []).map((a) => {
                         const h = HORARIOS.find((x) => x.id === a);
                         if (!h) return null;
                         return (
@@ -1380,9 +1362,9 @@ export default function FilaClube() {
                       })}
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
-                      {isAdmin ? `Matrícula ${p.matricula} · desde ${formatDate(p.joinedAt)}` : `Na fila desde ${formatDate(p.joinedAt)}`}
+                      {isAdmin ? `Matrícula ${entry.matricula} · desde ${formatDate(entry.joined_at)}` : `Na fila desde ${formatDate(entry.joined_at)}`}
                     </p>
-                    {isAdmin && (p.status !== "chamado") && (!canCall || waitEstimate) && (
+                    {isAdmin && entry.status !== "chamado" && (!canCall || waitEstimate) && (
                       <p style={{ margin: "4px 0 0", display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {!canCall && (
                           <span style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
@@ -1390,7 +1372,7 @@ export default function FilaClube() {
                           </span>
                         )}
                         {waitEstimate && (() => {
-                          const range = estimateRangeForPosition(i + 1);
+                          const range = estimateRangeForPosition(entry.position);
                           return range ? (
                             <span style={{ fontSize: "11px", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
                               <Clock size={10} aria-hidden="true" /> {range.low}–{range.high} meses (beta)
@@ -1399,45 +1381,35 @@ export default function FilaClube() {
                         })()}
                       </p>
                     )}
-                    {isAdmin && p.phone && (
+                    {isAdmin && entry.phone && (
                       <p style={{ margin: "2px 0 0", fontSize: "12px" }}>
-                        <a
-                          href={whatsappLink(p.phone)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: "#1F8A5C", textDecoration: "none", fontWeight: "500" }}
-                        >
-                          <MessageCircle size={12} aria-hidden="true" /> {p.phone}
+                        <a href={whatsappLink(entry.phone)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: "#1F8A5C", textDecoration: "none", fontWeight: "500" }}>
+                          <MessageCircle size={12} aria-hidden="true" /> {entry.phone}
                         </a>
                       </p>
                     )}
                   </div>
                   {isAdmin && (
                     <div className="fc-queue-actions">
-                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openEditModal(i)} aria-label="Editar dados do sócio">
+                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openEditModal(entry)} aria-label="Editar dados do sócio">
                         <Pencil size={14} aria-hidden="true" />
                       </button>
-                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("up", i)} disabled={i === 0} aria-label="Subir posição">
+                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("up", entry)} aria-label="Subir posição">
                         <ChevronUp size={14} aria-hidden="true" />
                       </button>
-                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("down", i)} disabled={i === queue.length - 1} aria-label="Descer posição">
+                      <button className="fc-btn" style={{ padding: "6px 8px" }} onClick={() => openReasonModal("down", entry)} aria-label="Descer posição">
                         <ChevronDown size={14} aria-hidden="true" />
                       </button>
-                      {p.status === "chamado" ? (
-                        <button className="fc-btn fc-btn-primary" onClick={() => openResponseModal(i)}>
+                      {entry.status === "chamado" ? (
+                        <button className="fc-btn fc-btn-primary" onClick={() => openResponseModal(entry)}>
                           <UserCheck size={14} aria-hidden="true" /> Registrar resposta
                         </button>
                       ) : (
-                        <button
-                          className="fc-btn"
-                          onClick={() => callMember(i)}
-                          disabled={!canCall}
-                          title={canCall ? "" : "Chame primeiro os sócios à frente na fila"}
-                        >
+                        <button className="fc-btn" onClick={() => handleCallMember(entry)} disabled={!canCall} title={canCall ? "" : "Chame primeiro os sócios à frente na fila"}>
                           <Megaphone size={14} aria-hidden="true" /> Chamar
                         </button>
                       )}
-                      <button className="fc-btn fc-btn-danger" style={{ padding: "6px 8px" }} onClick={() => setConfirmRemove(i)} aria-label="Remover da fila">
+                      <button className="fc-btn fc-btn-danger" style={{ padding: "6px 8px" }} onClick={() => { setConfirmRemove(entry); setReasonInput(""); setReasonError(""); }} aria-label="Remover da fila">
                         <Trash2 size={14} aria-hidden="true" />
                       </button>
                     </div>
@@ -1447,10 +1419,10 @@ export default function FilaClube() {
             })}
           </div>
 
-          {visibleQueue.length < filteredQueue.length && (
+          {queueRows.length < queueTotalCount && (
             <div style={{ margin: "12px 24px 0" }}>
-              <button className="fc-btn" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
-                Mostrar mais {Math.min(PAGE_SIZE, filteredQueue.length - visibleQueue.length)}
+              <button className="fc-btn" onClick={loadMoreQueue} disabled={queueLoadingMore}>
+                {queueLoadingMore ? "Carregando..." : `Mostrar mais ${Math.min(PAGE_SIZE, queueTotalCount - queueRows.length)}`}
               </button>
             </div>
           )}
@@ -1476,13 +1448,7 @@ export default function FilaClube() {
                           <button
                             key={n.id}
                             className="fc-btn"
-                            style={{
-                              padding: "4px 10px",
-                              fontSize: "12px",
-                              background: newMember.level === n.id ? n.bg : "#fff",
-                              color: newMember.level === n.id ? n.fg : "#10314F",
-                              borderColor: newMember.level === n.id ? n.fg : "#DAD2B8",
-                            }}
+                            style={{ padding: "4px 10px", fontSize: "12px", background: newMember.level === n.id ? n.bg : "#fff", color: newMember.level === n.id ? n.fg : "#10314F", borderColor: newMember.level === n.id ? n.fg : "#DAD2B8" }}
                             onClick={() => setNewMember({ ...newMember, level: newMember.level === n.id ? "" : n.id })}
                           >
                             {n.label}
@@ -1499,20 +1465,8 @@ export default function FilaClube() {
                             <button
                               key={h.id}
                               className="fc-btn"
-                              style={{
-                                padding: "4px 10px",
-                                fontSize: "12px",
-                                background: active ? "#EAF1F8" : "#fff",
-                                borderColor: active ? "#0F3D63" : "#DAD2B8",
-                              }}
-                              onClick={() =>
-                                setNewMember({
-                                  ...newMember,
-                                  availability: active
-                                    ? newMember.availability.filter((a) => a !== h.id)
-                                    : [...newMember.availability, h.id],
-                                })
-                              }
+                              style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#DAD2B8" }}
+                              onClick={() => setNewMember({ ...newMember, availability: active ? newMember.availability.filter((a) => a !== h.id) : [...newMember.availability, h.id] })}
                             >
                               <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
                               {h.label}
@@ -1528,13 +1482,7 @@ export default function FilaClube() {
                           <button
                             key={f.id}
                             className="fc-btn"
-                            style={{
-                              padding: "4px 10px",
-                              fontSize: "12px",
-                              background: newMember.faixaEtaria === f.id ? f.bg : "#fff",
-                              color: newMember.faixaEtaria === f.id ? f.fg : "#10314F",
-                              borderColor: newMember.faixaEtaria === f.id ? f.fg : "#DAD2B8",
-                            }}
+                            style={{ padding: "4px 10px", fontSize: "12px", background: newMember.faixaEtaria === f.id ? f.bg : "#fff", color: newMember.faixaEtaria === f.id ? f.fg : "#10314F", borderColor: newMember.faixaEtaria === f.id ? f.fg : "#DAD2B8" }}
                             onClick={() => setNewMember({ ...newMember, faixaEtaria: newMember.faixaEtaria === f.id ? "" : f.id })}
                           >
                             {f.label}
@@ -1559,11 +1507,7 @@ export default function FilaClube() {
                 <p style={{ fontSize: "12px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
                   <History size={14} aria-hidden="true" /> Últimas alterações — {currentModLabel}
                 </p>
-                <button
-                  className="fc-btn"
-                  style={{ padding: "4px 10px", fontSize: "12px" }}
-                  onClick={() => { setShowLogsView(true); setLogModalityFilter(modality); setLogSearch(""); setLogVisibleCount(LOG_PAGE_SIZE); }}
-                >
+                <button className="fc-btn" style={{ padding: "4px 10px", fontSize: "12px" }} onClick={openLogsView}>
                   Ver histórico completo
                 </button>
               </div>
@@ -1574,7 +1518,7 @@ export default function FilaClube() {
                 {modalityLogsPreview.map((l, i) => (
                   <div key={l.id} style={{ padding: "10px 0", borderBottom: i < modalityLogsPreview.length - 1 ? "1px solid #EAF0F5" : "none", fontFamily: "system-ui, sans-serif", fontSize: "13px" }}>
                     <span style={{ color: "#10314F" }}>{l.text}</span>
-                    <span style={{ color: "#8FA1B0" }}> · {formatLogTime(l.ts)} · {l.by}</span>
+                    <span style={{ color: "#8FA1B0" }}> · {formatLogTime(new Date(l.ts).getTime())} · {l.by}</span>
                     {l.reason && <p style={{ margin: "2px 0 0", color: "#8FA1B0", fontSize: "12px" }}>Motivo: {l.reason}</p>}
                   </div>
                 ))}
@@ -1605,37 +1549,10 @@ export default function FilaClube() {
         </div>
       )}
 
-      {pendingAction && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
-          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
-            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
-              {pendingAction.type === "up" && "Subir posição"}
-              {pendingAction.type === "down" && "Descer posição"}
-            </p>
-            <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
-              {queue[pendingAction.index]?.full} — informe o motivo dessa alteração para ficar registrado no log.
-            </p>
-            <textarea
-              className="fc-input"
-              rows={3}
-              style={{ resize: "vertical", marginBottom: "6px" }}
-              placeholder="Ex: vaga liberada por desistência de outro sócio"
-              value={reasonInput}
-              onChange={(e) => { setReasonInput(e.target.value); setReasonError(""); }}
-            />
-            {reasonError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{reasonError}</p>}
-            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-              <button className="fc-btn fc-btn-primary" onClick={confirmPendingAction}>Confirmar</button>
-              <button className="fc-btn" onClick={() => setPendingAction(null)}>Cancelar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editingIndex !== null && (
+      {editingEntry && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50, overflowY: "auto" }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(480px, 100%)", fontFamily: "system-ui, sans-serif", margin: "24px 0" }}>
-            <p style={{ margin: "0 0 14px", fontSize: "15px", fontWeight: "500" }}>Editar dados de {queue[editingIndex]?.full}</p>
+            <p style={{ margin: "0 0 14px", fontSize: "15px", fontWeight: "500" }}>Editar dados de {editingEntry.full_name}</p>
 
             <div className="fc-form-grid" style={{ marginBottom: "10px" }}>
               <input className="fc-input" placeholder="Nome completo" value={editDraft.full} onChange={(e) => { setEditDraft({ ...editDraft, full: e.target.value }); setEditError(""); }} />
@@ -1651,13 +1568,7 @@ export default function FilaClube() {
                     <button
                       key={n.id}
                       className="fc-btn"
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: "12px",
-                        background: editDraft.level === n.id ? n.bg : "#fff",
-                        color: editDraft.level === n.id ? n.fg : "#10314F",
-                        borderColor: editDraft.level === n.id ? n.fg : "#DAD2B8",
-                      }}
+                      style={{ padding: "4px 10px", fontSize: "12px", background: editDraft.level === n.id ? n.bg : "#fff", color: editDraft.level === n.id ? n.fg : "#10314F", borderColor: editDraft.level === n.id ? n.fg : "#DAD2B8" }}
                       onClick={() => setEditDraft({ ...editDraft, level: editDraft.level === n.id ? "" : n.id })}
                     >
                       {n.label}
@@ -1675,12 +1586,7 @@ export default function FilaClube() {
                         key={h.id}
                         className="fc-btn"
                         style={{ padding: "4px 10px", fontSize: "12px", background: active ? "#EAF1F8" : "#fff", borderColor: active ? "#0F3D63" : "#DAD2B8" }}
-                        onClick={() =>
-                          setEditDraft({
-                            ...editDraft,
-                            availability: active ? editDraft.availability.filter((a) => a !== h.id) : [...editDraft.availability, h.id],
-                          })
-                        }
+                        onClick={() => setEditDraft({ ...editDraft, availability: active ? editDraft.availability.filter((a) => a !== h.id) : [...editDraft.availability, h.id] })}
                       >
                         <h.Icon size={12} aria-hidden="true" style={{ marginRight: "3px", verticalAlign: "-2px" }} />
                         {h.label}
@@ -1696,13 +1602,7 @@ export default function FilaClube() {
                     <button
                       key={f.id}
                       className="fc-btn"
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: "12px",
-                        background: editDraft.faixaEtaria === f.id ? f.bg : "#fff",
-                        color: editDraft.faixaEtaria === f.id ? f.fg : "#10314F",
-                        borderColor: editDraft.faixaEtaria === f.id ? f.fg : "#DAD2B8",
-                      }}
+                      style={{ padding: "4px 10px", fontSize: "12px", background: editDraft.faixaEtaria === f.id ? f.bg : "#fff", color: editDraft.faixaEtaria === f.id ? f.fg : "#10314F", borderColor: editDraft.faixaEtaria === f.id ? f.fg : "#DAD2B8" }}
                       onClick={() => setEditDraft({ ...editDraft, faixaEtaria: editDraft.faixaEtaria === f.id ? "" : f.id })}
                     >
                       {f.label}
@@ -1725,7 +1625,34 @@ export default function FilaClube() {
 
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               <button className="fc-btn fc-btn-primary" onClick={saveEditMember}>Salvar alterações</button>
-              <button className="fc-btn" onClick={() => { setEditingIndex(null); setEditError(""); }}>Cancelar</button>
+              <button className="fc-btn" onClick={() => { setEditingEntry(null); setEditError(""); }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingAction && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
+            <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
+              {pendingAction.type === "up" && "Subir posição"}
+              {pendingAction.type === "down" && "Descer posição"}
+            </p>
+            <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
+              {pendingAction.entry.full_name} — informe o motivo dessa alteração para ficar registrado no log.
+            </p>
+            <textarea
+              className="fc-input"
+              rows={3}
+              style={{ resize: "vertical", marginBottom: "6px" }}
+              placeholder="Ex: vaga liberada por desistência de outro sócio"
+              value={reasonInput}
+              onChange={(e) => { setReasonInput(e.target.value); setReasonError(""); }}
+            />
+            {reasonError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{reasonError}</p>}
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <button className="fc-btn fc-btn-primary" onClick={confirmPendingAction}>Confirmar</button>
+              <button className="fc-btn" onClick={() => setPendingAction(null)}>Cancelar</button>
             </div>
           </div>
         </div>
@@ -1736,42 +1663,27 @@ export default function FilaClube() {
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(420px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 4px", fontSize: "15px", fontWeight: "500" }}>Registrar resposta</p>
             <p style={{ margin: "0 0 14px", fontSize: "13px", color: "#5B6B7A" }}>
-              {queue[pendingResponse.index]?.full} — o que aconteceu com essa chamada?
+              {pendingResponse.full_name} — o que aconteceu com essa chamada?
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
               <button
                 className="fc-btn"
-                style={{
-                  justifyContent: "flex-start",
-                  padding: "10px 12px",
-                  borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#DAD2B8",
-                  background: responseChoice === "aceitou" ? "#EAF1F8" : "#fff",
-                }}
+                style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "aceitou" ? "#EAF1F8" : "#fff" }}
                 onClick={() => { setResponseChoice("aceitou"); setResponseError(""); }}
               >
                 <UserCheck size={16} aria-hidden="true" /> Aceitou a vaga — foi matriculado
               </button>
               <button
                 className="fc-btn"
-                style={{
-                  justifyContent: "flex-start",
-                  padding: "10px 12px",
-                  borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#DAD2B8",
-                  background: responseChoice === "recusou_fica" ? "#EAF1F8" : "#fff",
-                }}
+                style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "recusou_fica" ? "#EAF1F8" : "#fff" }}
                 onClick={() => { setResponseChoice("recusou_fica"); setResponseError(""); }}
               >
                 <Clock size={16} aria-hidden="true" /> Recusou — continua na fila (desce 1 posição)
               </button>
               <button
                 className="fc-btn"
-                style={{
-                  justifyContent: "flex-start",
-                  padding: "10px 12px",
-                  borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#DAD2B8",
-                  background: responseChoice === "recusou_sai" ? "#EAF1F8" : "#fff",
-                }}
+                style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "recusou_sai" ? "#EAF1F8" : "#fff" }}
                 onClick={() => { setResponseChoice("recusou_sai"); setResponseError(""); }}
               >
                 <UserX size={16} aria-hidden="true" /> Recusou — remover da fila
@@ -1801,10 +1713,10 @@ export default function FilaClube() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,61,99,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", zIndex: 50 }}>
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(400px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>
-              Esvaziar fila de {allModalidades.find((m) => m.id === confirmClearQueue)?.label}?
+              Esvaziar fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}?
             </p>
             <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
-              Isso remove os {(data.queues[confirmClearQueue] || []).length} sócios atualmente na fila de {allModalidades.find((m) => m.id === confirmClearQueue)?.label}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
+              Isso remove os {modalidadeQueueCounts[confirmClearQueue] ?? "…"} sócios atualmente na fila de {modalidades.find((m) => m.id === confirmClearQueue)?.label}. Uma entrada única fica registrada no histórico com a lista completa de quem foi removido, para consulta futura. Essa ação não pode ser desfeita.
             </p>
             <textarea
               className="fc-input"
@@ -1816,7 +1728,7 @@ export default function FilaClube() {
             />
             {clearError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{clearError}</p>}
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-              <button className="fc-btn fc-btn-danger" onClick={clearQueue}>Esvaziar fila</button>
+              <button className="fc-btn fc-btn-danger" onClick={clearQueueAction}>Esvaziar fila</button>
               <button className="fc-btn" onClick={() => { setConfirmClearQueue(null); setClearReason(""); setClearError(""); }}>Cancelar</button>
             </div>
           </div>
@@ -1828,7 +1740,7 @@ export default function FilaClube() {
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Arquivar modalidade?</p>
             <p style={{ margin: "0 0 16px", fontSize: "13px", color: "#5B6B7A" }}>
-              "{allModalidades.find((m) => m.id === confirmRemoveModalidade)?.label}" deixará de aparecer nas abas. O histórico continua acessível pelo filtro, e você pode restaurar a modalidade a qualquer momento.
+              "{modalidades.find((m) => m.id === confirmRemoveModalidade)?.label}" deixará de aparecer nas abas. O histórico continua acessível pelo filtro, e você pode restaurar a modalidade a qualquer momento.
             </p>
             <div style={{ display: "flex", gap: "8px" }}>
               <button className="fc-btn fc-btn-danger" onClick={() => removeModalidade(confirmRemoveModalidade)}>Arquivar</button>
@@ -1843,7 +1755,7 @@ export default function FilaClube() {
           <div style={{ background: "#fff", borderRadius: "12px", padding: "24px", width: "min(380px, 100%)", fontFamily: "system-ui, sans-serif" }}>
             <p style={{ margin: "0 0 8px", fontSize: "15px", fontWeight: "500" }}>Remover da fila?</p>
             <p style={{ margin: "0 0 12px", fontSize: "13px", color: "#5B6B7A" }}>
-              {queue[confirmRemove]?.full} sairá da fila de {currentModLabel}. Informe o motivo — essa ação fica registrada no log.
+              {confirmRemove.full_name} sairá da fila de {currentModLabel}. Informe o motivo — essa ação fica registrada no log.
             </p>
             <textarea
               className="fc-input"
@@ -1855,26 +1767,7 @@ export default function FilaClube() {
             />
             {reasonError && <p style={{ fontSize: "12px", color: "#A32D2D", margin: "0 0 10px" }}>{reasonError}</p>}
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-              <button
-                className="fc-btn fc-btn-danger"
-                onClick={() => {
-                  if (!reasonInput.trim()) {
-                    setReasonError("Informe o motivo da remoção.");
-                    return;
-                  }
-                  const index = confirmRemove;
-                  const arr = [...(dataRef.current.queues[modality] || [])];
-                  const person = arr[index];
-                  arr.splice(index, 1);
-                  let next = { ...dataRef.current, queues: { ...dataRef.current.queues, [modality]: arr } };
-                  next = pushLog(next, `${person.full} foi removido da fila (posição ${index + 1})`, reasonInput.trim());
-                  persist(next);
-                  setConfirmRemove(null);
-                  setReasonInput("");
-                }}
-              >
-                Remover
-              </button>
+              <button className="fc-btn fc-btn-danger" onClick={confirmRemoveEntry}>Remover</button>
               <button className="fc-btn" onClick={() => { setConfirmRemove(null); setReasonInput(""); setReasonError(""); }}>Cancelar</button>
             </div>
           </div>
