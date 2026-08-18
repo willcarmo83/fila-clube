@@ -1212,14 +1212,13 @@ export default function FilaClube() {
             />
           </div>
 
-          {isAdmin && (
-            <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "12px", overflow: "hidden" }}>
+          <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "12px", overflow: "hidden" }}>
               <button
                 onClick={() => setShowVagaFilters((v) => !v)}
                 style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "10px 14px", background: "none", border: "none", cursor: "pointer", fontFamily: "system-ui, sans-serif", textAlign: "left" }}
               >
                 <span style={{ fontSize: "12px", color: "#5B6B7A", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
-                  <Filter size={12} aria-hidden="true" /> Filtrar para uma vaga específica
+                  <Filter size={12} aria-hidden="true" /> {isAdmin ? "Filtrar para uma vaga específica" : "Filtrar por nível e horário"}
                   {isFilteringForVaga && !showVagaFilters && (
                     <span style={{ color: "#0F3D63", fontWeight: "500" }}>
                       · {[filterLevel && NIVEIS.find((n) => n.id === filterLevel)?.label, filterHorarios.length > 0 && filterHorarios.map((h) => HORARIOS.find((x) => x.id === h)?.label).join(", "), filterFaixaEtaria && FAIXAS_ETARIAS.find((f) => f.id === filterFaixaEtaria)?.label].filter(Boolean).join(" · ")} ativo
@@ -1231,9 +1230,7 @@ export default function FilaClube() {
 
               {showVagaFilters && (
                 <div style={{ padding: "0 14px 12px" }}>
-                  <p style={{ margin: "0 0 8px", fontSize: "12px", color: "#5B6B7A", fontFamily: "system-ui, sans-serif" }}>
-                    Define quem pode ser chamado, dentro dos que se encaixam.
-                  </p>
+                  <p style={{ margin: "0 0 8px", fontSize: "12px", color: "#5B6B7A", fontFamily: "system-ui, sans-serif" }}>{isAdmin ? "Define quem pode ser chamado, dentro dos que se encaixam." : "Veja só quem se encaixa em um nível, horário ou faixa etária específica."}</p>
                   <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
                     <button
                       className="fc-btn"
@@ -1290,13 +1287,14 @@ export default function FilaClube() {
                   </div>
                   {isFilteringForVaga && (
                     <p style={{ margin: "8px 0 0", fontSize: "12px", color: "#0F3D63" }}>
-                      Mostrando só quem se encaixa nesse filtro — a ordem de chamada respeita a posição deles entre si, não a fila inteira.
+                      {isAdmin
+                        ? "Mostrando só quem se encaixa nesse filtro — a ordem de chamada respeita a posição deles entre si, não a fila inteira."
+                        : "Mostrando só quem se encaixa nesse filtro."}
                     </p>
                   )}
                 </div>
               )}
             </div>
-          )}
 
           <div style={{ margin: "0 24px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "14px", boxShadow: "0 1px 2px rgba(15,61,99,0.04), 0 10px 24px -14px rgba(15,61,99,0.22)", overflow: "hidden" }}>
             {queueLoading && (
@@ -1334,34 +1332,40 @@ export default function FilaClube() {
                     {entry.position}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F" }}>
                       {displayName}
-                      {entry.status === "chamado" && (
+                    </p>
+                    {entry.status === "chamado" && (
+                      <p style={{ margin: "4px 0 0" }}>
                         <span style={{ fontSize: "11px", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
                           <Clock size={11} aria-hidden="true" /> Aguardando resposta{isAdmin && entry.called_at ? ` · ${formatLogTime(new Date(entry.called_at).getTime())}` : ""}
                         </span>
-                      )}
-                      {entry.level && NIVEIS.find((n) => n.id === entry.level) && (
-                        <span style={{ fontSize: "11px", fontWeight: "500", color: NIVEIS.find((n) => n.id === entry.level).fg, background: NIVEIS.find((n) => n.id === entry.level).bg, padding: "2px 8px", borderRadius: "999px" }}>
-                          {NIVEIS.find((n) => n.id === entry.level).label}
-                        </span>
-                      )}
-                      {entry.faixa_etaria && FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria) && (
-                        <span style={{ fontSize: "11px", fontWeight: "500", color: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).fg, background: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).bg, padding: "2px 8px", borderRadius: "999px" }}>
-                          {FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).label}
-                        </span>
-                      )}
-                      {(entry.availability || []).map((a) => {
-                        const h = HORARIOS.find((x) => x.id === a);
-                        if (!h) return null;
-                        return (
-                          <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                            <h.Icon size={11} aria-hidden="true" /> {h.label}
+                      </p>
+                    )}
+                    {(entry.level || entry.faixa_etaria || (entry.availability && entry.availability.length > 0)) && (
+                      <p style={{ margin: "4px 0 0", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        {entry.level && NIVEIS.find((n) => n.id === entry.level) && (
+                          <span style={{ fontSize: "11px", fontWeight: "500", color: NIVEIS.find((n) => n.id === entry.level).fg, background: NIVEIS.find((n) => n.id === entry.level).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                            {NIVEIS.find((n) => n.id === entry.level).label}
                           </span>
-                        );
-                      })}
-                    </p>
-                    <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
+                        )}
+                        {entry.faixa_etaria && FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria) && (
+                          <span style={{ fontSize: "11px", fontWeight: "500", color: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).fg, background: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                            {FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).label}
+                          </span>
+                        )}
+                        {(entry.availability || []).map((a) => {
+                          const h = HORARIOS.find((x) => x.id === a);
+                          if (!h) return null;
+                          return (
+                            <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                              <h.Icon size={11} aria-hidden="true" /> {h.label}
+                            </span>
+                          );
+                        })}
+                      </p>
+                    )}
+                    <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
                       {isAdmin ? `Matrícula ${entry.matricula} · desde ${formatDate(entry.joined_at)}` : `Na fila desde ${formatDate(entry.joined_at)}`}
                     </p>
                     {isAdmin && entry.status !== "chamado" && (!canCall || waitEstimate) && (
@@ -1670,21 +1674,21 @@ export default function FilaClube() {
               <button
                 className="fc-btn"
                 style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "aceitou" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "aceitou" ? "#EAF1F8" : "#fff" }}
-                onClick={() => { setResponseChoice("aceitou"); setResponseError(""); }}
+                onClick={() => { setResponseChoice("aceitou"); setResponseReason("Aceitou a vaga"); setResponseError(""); }}
               >
                 <UserCheck size={16} aria-hidden="true" /> Aceitou a vaga — foi matriculado
               </button>
               <button
                 className="fc-btn"
                 style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "recusou_fica" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "recusou_fica" ? "#EAF1F8" : "#fff" }}
-                onClick={() => { setResponseChoice("recusou_fica"); setResponseError(""); }}
+                onClick={() => { setResponseChoice("recusou_fica"); setResponseReason(""); setResponseError(""); }}
               >
                 <Clock size={16} aria-hidden="true" /> Recusou — continua na fila (desce 1 posição)
               </button>
               <button
                 className="fc-btn"
                 style={{ justifyContent: "flex-start", padding: "10px 12px", borderColor: responseChoice === "recusou_sai" ? "#0F3D63" : "#DAD2B8", background: responseChoice === "recusou_sai" ? "#EAF1F8" : "#fff" }}
-                onClick={() => { setResponseChoice("recusou_sai"); setResponseError(""); }}
+                onClick={() => { setResponseChoice("recusou_sai"); setResponseReason(""); setResponseError(""); }}
               >
                 <UserX size={16} aria-hidden="true" /> Recusou — remover da fila
               </button>
