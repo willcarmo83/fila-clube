@@ -4,7 +4,7 @@ import App from "./App.jsx";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <div style={{ maxWidth: "760px", margin: "0 auto", padding: "24px 16px" }}>
+    <div style={{ maxWidth: "1180px", margin: "0 auto", padding: "24px 16px" }}>
       <App />
     </div>
   </React.StrictMode>
