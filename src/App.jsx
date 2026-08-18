@@ -870,7 +870,7 @@ export default function FilaClube() {
   return (
     <div style={{ fontFamily: "'Georgia', 'Times New Roman', serif", background: "#FAF7F0", minHeight: "600px", borderRadius: "16px", overflow: "hidden", border: "1px solid #E7DFC8", boxShadow: "0 1px 3px rgba(15,61,99,0.06), 0 20px 48px -24px rgba(15,61,99,0.28)" }}>
       <style>{`
-        .fc-btn { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; background: #fff; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all .15s ease; color: #10314F; }
+        .fc-btn { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; background: #fff; border-radius: 8px; padding: clamp(6px, 0.6vw, 10px) clamp(12px, 1.1vw, 18px); font-size: clamp(13px, 0.85vw + 6px, 15px); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all .15s ease; color: #10314F; }
         .fc-btn:hover { background: #F3EFE2; border-color: #C9BD98; }
         .fc-btn:active { transform: scale(0.97); }
         .fc-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -878,16 +878,16 @@ export default function FilaClube() {
         .fc-btn-primary:hover { background: #0B2E4C; border-color: #0B2E4C; }
         .fc-btn-danger { color: #A32D2D; border-color: #E3B9B9; }
         .fc-btn-danger:hover { background: #FBEAEA; border-color: #D99; }
-        .fc-input { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: 8px 10px; font-size: 13px; width: 100%; box-sizing: border-box; transition: border-color .15s ease, box-shadow .15s ease; }
+        .fc-input { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: clamp(8px, 0.6vw, 12px) clamp(10px, 0.8vw, 14px); font-size: clamp(13px, 0.85vw + 6px, 15px); width: 100%; box-sizing: border-box; transition: border-color .15s ease, box-shadow .15s ease; }
         .fc-input:focus { outline: none; border-color: #B08A3C; box-shadow: 0 0 0 3px rgba(176,138,60,0.18); }
-        .fc-tab { font-family: system-ui, sans-serif; font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; color: #5B6B7A; background: transparent; transition: all .15s ease; }
+        .fc-tab { font-family: system-ui, sans-serif; font-size: clamp(13px, 0.85vw + 6px, 15px); font-weight: 500; padding: clamp(8px, 0.6vw, 11px) clamp(16px, 1.2vw, 22px); border-radius: 999px; border: 1px solid transparent; cursor: pointer; color: #5B6B7A; background: transparent; transition: all .15s ease; }
         .fc-tab:hover { background: #F3EFE2; color: #10314F; }
         .fc-tab-active { background: #0F3D63; color: #fff; box-shadow: 0 2px 6px rgba(15,61,99,0.35); }
         .fc-tab-active:hover { background: #0B2E4C; color: #fff; }
-        .fc-select { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: 7px 10px; font-size: 13px; background: #fff; color: #10314F; }
-        .fc-queue-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border-bottom: 1px solid #F0EBDD; font-family: system-ui, sans-serif; flex-wrap: wrap; transition: background .15s ease; }
+        .fc-select { font-family: system-ui, sans-serif; border: 1px solid #DAD2B8; border-radius: 8px; padding: clamp(7px, 0.6vw, 10px); font-size: clamp(13px, 0.85vw + 6px, 15px); background: #fff; color: #10314F; }
+        .fc-queue-row { display: flex; align-items: flex-start; gap: clamp(14px, 1.2vw, 20px); padding: clamp(14px, 1.4vw, 22px) clamp(16px, 1.8vw, 28px); border-bottom: 1px solid #F0EBDD; font-family: system-ui, sans-serif; flex-wrap: wrap; transition: background .15s ease; }
         .fc-queue-row:hover { background: #FCFAF4; }
-        .fc-queue-actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
+        .fc-queue-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
         .fc-form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
         .fc-dropdown-item { width: 100%; text-align: left; padding: 10px 14px; border: none; background: #fff; cursor: pointer; font-family: system-ui, sans-serif; font-size: 13px; color: #10314F; display: flex; align-items: center; gap: 8px; transition: background .15s ease; }
         .fc-dropdown-item:hover { background: #F5F0E2; }
@@ -905,7 +905,7 @@ export default function FilaClube() {
             <p style={{ fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#D9BD82", margin: "0 0 6px", fontFamily: "system-ui, sans-serif", fontWeight: "600" }}>
               Country Clube
             </p>
-            <h1 style={{ fontSize: "26px", fontWeight: "500", margin: 0, letterSpacing: "0.2px" }}>
+            <h1 style={{ fontSize: "clamp(24px, 1.6vw + 18px, 34px)", fontWeight: "500", margin: 0, letterSpacing: "0.2px" }}>
               {showLogsView ? "Histórico de alterações" : showManageModalidades ? "Gerenciar modalidades" : showDashboard ? "Painel geral" : "Fila de espera — atividades esportivas"}
             </h1>
           </div>
@@ -1180,11 +1180,11 @@ export default function FilaClube() {
           </div>
 
           <div style={{ padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
-            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+            <p style={{ fontSize: "clamp(13px, 0.5vw + 10px, 15px)", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
               {isAdmin ? <Unlock size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
               {isAdmin ? "Modo administração — você pode reordenar, chamar e remover sócios" : "Modo consulta — visível a qualquer sócio"}
             </p>
-            <p style={{ fontSize: "13px", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
+            <p style={{ fontSize: "clamp(13px, 0.5vw + 10px, 15px)", color: "#5B6B7A", margin: 0, fontFamily: "system-ui, sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
               <Users size={14} aria-hidden="true" /> {queueTotalCount} na fila de {currentModLabel}
             </p>
           </div>
@@ -1328,12 +1328,12 @@ export default function FilaClube() {
                 <div key={entry.id} className="fc-queue-row">
                   <div
                     style={{
-                      width: "32px",
-                      height: "32px",
+                      width: "clamp(32px, 2.4vw, 44px)",
+                      height: "clamp(32px, 2.4vw, 44px)",
                       borderRadius: "50%",
                       background: isFirst ? "#0F3D63" : "#E3EEF7",
                       color: isFirst ? "#fff" : "#0F3D63",
-                      fontSize: "13px",
+                      fontSize: "clamp(13px, 0.9vw + 6px, 17px)",
                       fontWeight: "700",
                       fontFamily: "Georgia, serif",
                       display: "flex",
@@ -1347,40 +1347,34 @@ export default function FilaClube() {
                     {entry.position}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "500", color: "#10314F" }}>
+                    <p style={{ margin: 0, fontSize: "clamp(14px, 0.9vw + 8px, 18px)", fontWeight: "500", color: "#10314F", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                       {displayName}
-                    </p>
-                    {entry.status === "chamado" && (
-                      <p style={{ margin: "4px 0 0" }}>
-                        <span style={{ fontSize: "11px", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      {entry.status === "chamado" && (
+                        <span style={{ fontSize: "clamp(11px, 0.5vw + 8px, 13px)", fontWeight: "500", color: "#8A6D1F", background: "#FBF3D9", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
                           <Clock size={11} aria-hidden="true" /> Aguardando resposta{isAdmin && entry.called_at ? ` · ${formatLogTime(new Date(entry.called_at).getTime())}` : ""}
                         </span>
-                      </p>
-                    )}
-                    {(entry.level || entry.faixa_etaria || (entry.availability && entry.availability.length > 0)) && (
-                      <p style={{ margin: "4px 0 0", display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                        {entry.level && NIVEIS.find((n) => n.id === entry.level) && (
-                          <span style={{ fontSize: "11px", fontWeight: "500", color: NIVEIS.find((n) => n.id === entry.level).fg, background: NIVEIS.find((n) => n.id === entry.level).bg, padding: "2px 8px", borderRadius: "999px" }}>
-                            {NIVEIS.find((n) => n.id === entry.level).label}
+                      )}
+                      {entry.level && NIVEIS.find((n) => n.id === entry.level) && (
+                        <span style={{ fontSize: "clamp(11px, 0.5vw + 8px, 13px)", fontWeight: "500", color: NIVEIS.find((n) => n.id === entry.level).fg, background: NIVEIS.find((n) => n.id === entry.level).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                          {NIVEIS.find((n) => n.id === entry.level).label}
+                        </span>
+                      )}
+                      {entry.faixa_etaria && FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria) && (
+                        <span style={{ fontSize: "clamp(11px, 0.5vw + 8px, 13px)", fontWeight: "500", color: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).fg, background: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).bg, padding: "2px 8px", borderRadius: "999px" }}>
+                          {FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).label}
+                        </span>
+                      )}
+                      {(entry.availability || []).map((a) => {
+                        const h = HORARIOS.find((x) => x.id === a);
+                        if (!h) return null;
+                        return (
+                          <span key={a} style={{ fontSize: "clamp(11px, 0.5vw + 8px, 13px)", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                            <h.Icon size={11} aria-hidden="true" /> {h.label}
                           </span>
-                        )}
-                        {entry.faixa_etaria && FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria) && (
-                          <span style={{ fontSize: "11px", fontWeight: "500", color: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).fg, background: FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).bg, padding: "2px 8px", borderRadius: "999px" }}>
-                            {FAIXAS_ETARIAS.find((f) => f.id === entry.faixa_etaria).label}
-                          </span>
-                        )}
-                        {(entry.availability || []).map((a) => {
-                          const h = HORARIOS.find((x) => x.id === a);
-                          if (!h) return null;
-                          return (
-                            <span key={a} style={{ fontSize: "11px", color: "#5B6B7A", background: "#F5F0E2", padding: "2px 8px", borderRadius: "999px", display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                              <h.Icon size={11} aria-hidden="true" /> {h.label}
-                            </span>
-                          );
-                        })}
-                      </p>
-                    )}
-                    <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
+                        );
+                      })}
+                    </p>
+                    <p style={{ margin: "4px 0 0", fontSize: "clamp(12px, 0.5vw + 9px, 14px)", color: "#8FA1B0" }}>
                       {`Matrícula ${entry.matricula} · desde ${formatDate(entry.joined_at)}`}
                     </p>
                     {isAdmin && entry.status !== "chamado" && (!canCall || waitEstimate) && (
