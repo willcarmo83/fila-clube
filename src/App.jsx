@@ -219,6 +219,14 @@ export default function FilaClube() {
   const [queueError, setQueueError] = useState(false);
 
   const isFilteringForVaga = !!filterLevel || filterHorarios.length > 0 || !!filterFaixaEtaria;
+  const hasAnyFilterActive = isFilteringForVaga || !!queueSearchInput.trim();
+
+  function clearAllFilters() {
+    setQueueSearchInput("");
+    setFilterLevel("");
+    setFilterHorarios([]);
+    setFilterFaixaEtaria("");
+  }
   const vagaFilters = { level: filterLevel, horarios: filterHorarios, faixaEtaria: filterFaixaEtaria };
 
   useEffect(() => {
@@ -1201,15 +1209,22 @@ export default function FilaClube() {
             </div>
           )}
 
-          <div style={{ margin: "0 24px 12px", position: "relative" }}>
-            <Search size={14} aria-hidden="true" style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#8FA1B0" }} />
-            <input
-              className="fc-input"
-              style={{ paddingLeft: "30px" }}
-              placeholder="Buscar por nome ou matrícula"
-              value={queueSearchInput}
-              onChange={(e) => setQueueSearchInput(e.target.value)}
-            />
+          <div style={{ margin: "0 24px 12px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: "200px" }}>
+              <Search size={14} aria-hidden="true" style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#8FA1B0" }} />
+              <input
+                className="fc-input"
+                style={{ paddingLeft: "30px" }}
+                placeholder="Buscar por nome ou matrícula"
+                value={queueSearchInput}
+                onChange={(e) => setQueueSearchInput(e.target.value)}
+              />
+            </div>
+            {hasAnyFilterActive && (
+              <button className="fc-btn" style={{ fontSize: "12px", padding: "8px 12px", flexShrink: 0 }} onClick={clearAllFilters}>
+                <X size={12} aria-hidden="true" /> Limpar filtros
+              </button>
+            )}
           </div>
 
           <div style={{ margin: "0 24px 12px", background: "#fff", border: "1px solid #EAE2CC", borderRadius: "12px", overflow: "hidden" }}>
