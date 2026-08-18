@@ -51,7 +51,7 @@ export const db = {
       if (isAdmin) {
         q = q.or(`full_name.ilike.%${s}%,matricula.ilike.%${s}%`);
       } else {
-        q = q.ilike("masked_name", `%${s}%`);
+        q = q.or(`masked_name.ilike.%${s}%,matricula.ilike.%${s}%`);
       }
     }
     q = q.order("position", { ascending: true }).range(offset, offset + limit - 1);
