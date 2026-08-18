@@ -1206,7 +1206,7 @@ export default function FilaClube() {
             <input
               className="fc-input"
               style={{ paddingLeft: "30px" }}
-              placeholder={isAdmin ? "Buscar por nome ou matrícula" : "Buscar por nome"}
+              placeholder="Buscar por nome ou matrícula"
               value={queueSearchInput}
               onChange={(e) => setQueueSearchInput(e.target.value)}
             />
@@ -1366,7 +1366,7 @@ export default function FilaClube() {
                       </p>
                     )}
                     <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#8FA1B0" }}>
-                      {isAdmin ? `Matrícula ${entry.matricula} · desde ${formatDate(entry.joined_at)}` : `Na fila desde ${formatDate(entry.joined_at)}`}
+                      {`Matrícula ${entry.matricula} · desde ${formatDate(entry.joined_at)}`}
                     </p>
                     {isAdmin && entry.status !== "chamado" && (!canCall || waitEstimate) && (
                       <p style={{ margin: "4px 0 0", display: "flex", gap: "6px", flexWrap: "wrap" }}>
