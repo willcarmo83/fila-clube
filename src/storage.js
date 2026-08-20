@@ -109,7 +109,7 @@ export const db = {
   },
 
   async deleteQueueEntry(id) {
-    const { error } = await supabase.from("queue_entries").delete().eq("id", id);
+    const { error } = await supabase.rpc("delete_queue_entry_and_renumber", { p_entry_id: id });
     if (error) throw error;
   },
 
