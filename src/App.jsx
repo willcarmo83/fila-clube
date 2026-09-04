@@ -817,6 +817,14 @@ export default function FilaClube() {
       } else if (responseChoice === "recusou_sai") {
         await db.deleteQueueEntry(entry.id);
         await db.addLog({ modalidadeId: modality, text: `${entry.full_name} recusou a vaga e foi removido da fila`, reason: responseReason.trim(), by: adminName });
+      } else if (responseChoice === "cancelou_engano") {
+        await db.cancelCall(entry.id);
+        await db.addLog({
+          modalidadeId: modality,
+          text: `Chamada de ${entry.full_name} foi cancelada (engano) — volta ao normal, mantém a posição ${entry.position}`,
+          reason: responseReason.trim(),
+          by: adminName,
+        });
       }
       setPendingResponse(null);
       setResponseChoice(null);
@@ -1701,6 +1709,15 @@ export default function FilaClube() {
               >
                 <UserX size={16} aria-hidden="true" /> Recusou — remover da fila
               </button>
+              <div style={{ borderTop: "1px solid #F0EBDD", margin: "4px 0", paddingTop: "8px" }}>
+                <button
+                  className="fc-btn"
+                  style={{ justifyContent: "flex-start", padding: "10px 12px", width: "100%", borderColor: responseChoice === "cancelou_engano" ? "#B08A3C" : "#DAD2B8", background: responseChoice === "cancelou_engano" ? "#FBF3D9" : "#fff", color: "#8A6D1F" }}
+                  onClick={() => { setResponseChoice("cancelou_engano"); setResponseReason("Chamada registrada por engano"); setResponseError(""); }}
+                >
+                  <X size={16} aria-hidden="true" /> Foi engano — cancelar chamada (mantém a posição)
+                </button>
+              </div>
             </div>
 
             <label style={{ fontSize: "12px", color: "#5B6B7A", display: "block", marginBottom: "4px" }}>Observação (obrigatório)</label>
