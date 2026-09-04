@@ -109,7 +109,7 @@ export const db = {
   },
 
   async deleteQueueEntry(id) {
-    const { error } = await supabase.from("queue_entries").delete().eq("id", id);
+    const { error } = await supabase.rpc("delete_queue_entry_and_renumber", { p_entry_id: id });
     if (error) throw error;
   },
 
@@ -142,6 +142,11 @@ export const db = {
   async resolveResponseStay(id) {
     const { error: moveErr } = await supabase.rpc("move_queue_entry", { p_entry_id: id, p_direction: "down" });
     if (moveErr) throw moveErr;
+    const { error } = await supabase.from("queue_entries").update({ status: null, called_at: null }).eq("id", id);
+    if (error) throw error;
+  },
+
+  async cancelCall(id) {
     const { error } = await supabase.from("queue_entries").update({ status: null, called_at: null }).eq("id", id);
     if (error) throw error;
   },
