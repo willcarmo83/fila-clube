@@ -146,6 +146,11 @@ export const db = {
     if (error) throw error;
   },
 
+  async cancelCall(id) {
+    const { error } = await supabase.from("queue_entries").update({ status: null, called_at: null }).eq("id", id);
+    if (error) throw error;
+  },
+
   // ---------------------------------------------------------------------
   // Logs
   // ---------------------------------------------------------------------
